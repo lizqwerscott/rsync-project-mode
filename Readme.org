@@ -25,3 +25,5 @@ It also offers an option to automatically rsync the current project on every sav
 *** Options
 - ~rsync-project-sync-on-save~: Whether to activate a hook that synchronizes the project after each save.
 - ~rsync-project-list-file~: File in which to save the list of known projects.
+*** Alternatives
+- [[https://github.com/r-zip/rsync-mode.git][rsync-mode]]: Use ~.dir-locals.el~ store remote config.
