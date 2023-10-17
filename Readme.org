@@ -1,0 +1,27 @@
+* rsync-project-mode
+rsync-project-mode is a minor mode to automatically rsync entire projects to remote hosts in Emacs.
+It also offers an option to automatically rsync the current project on every save.
+*** Installation
+1. Install Emacs 28 or higher version
+2. Install Elisp dependencies:
+   - f
+3. Download this repository using git clone, and replace the load-path path in the configuration below.
+4. Add the following code to your configuration file ~/.emacs:
+   #+begin_src elisp
+     (add-to-list 'load-path "<path-to-rsync-project-mode>")
+     (require 'rsync-project-mode)
+
+     ;; Need sync when save buffer.
+     (setq rsync-project-sync-on-save t)
+
+     (add-hook 'prog-mode-hook
+               'rsync-project-mode)
+   #+end_src
+*** Commands
+- ~rsync-project-add~: add now project rsync remote config.
+- ~rsync-project-remove~: remove now project rsync remote config.
+- ~rsync-project-sync-all~: rsync all.
+- ~rsync-project-show-remote-config~: show now project remote config.
+*** Options
+- ~rsync-project-sync-on-save~: Whether to activate a hook that synchronizes the project after each save.
+- ~rsync-project-list-file~: File in which to save the list of known projects.
