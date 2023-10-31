@@ -15,6 +15,7 @@
 (require 'cl-lib)
 (require 'project)
 (require 'f)
+(require 's)
 
 (defgroup rsync-project nil
   "Convenient project remote synchronization."
@@ -60,7 +61,8 @@
               (remove-hook 'after-save-hook #'rsync-project-auto-sync t)
             (when rsync-project-sync-on-save
               (add-hook 'after-save-hook #'rsync-project-auto-sync 0 t)))
-        (message "Failed to activate rsync-project-mode: No remote configuration for rsync-project-mode found.")))))
+        ;; (message "Failed to activate rsync-project-mode: No remote configuration for rsync-project-mode found.")
+        ))))
 
 (defun rsync-project-write-list ()
   "Save the rsync project remote list."
@@ -95,6 +97,24 @@
                  (file-truename
                   (first elm)))
         :test #'string=))
+
+(defun rsync-project--test-connection (remote-config)
+  (let ((remote-user (first (second remote-config)))
+        (remote-host (second (second remote-config)))
+        (remote-port (third (second remote-config))))
+    (= 0
+       (shell-command
+        (format "ssh %s -o BatchMode=yes -o ConnectTimeout=1 %s true &>/dev/null"
+                (if remote-port
+                    (if (not (= 22 remote-port))
+                        (format "-p %s" remote-port)
+                      "")
+                  "")
+                (if (and remote-user remote-host)
+                    (format "%s@%s"
+                            remote-user
+                            remote-host)
+                  remote-host))))))
 
 (defun rsync-project-build-rsync-args (remote-config)
   (let ((local-path (first remote-config))
@@ -230,9 +250,11 @@
                   ;; (spinner-stop rsync--spinner)
                   )
                 )
-              (if (not (string-equal event "finished\n"))
-                  (message "Rsync process received abnormal event %s" event)
-                (message "Rsync complete."))))
+              (if (string-equal event "finished\n")
+                  (message "Rsync complete.")
+                (message "Rsync process received abnormal event %s" event)
+                (message "Close auto save.")
+                (remove-hook 'after-save-hook #'rsync-project-auto-sync t))))
       (set-process-sentinel rsync-project--process
                             #'(lambda (proc event)
                                 (funcall rsync-project--process-exit-hook proc event))))))
@@ -240,7 +262,10 @@
 (defun rsync-project-auto-sync ()
   (let ((remote-config (rsync-project-get-remote-config (project-root (project-current)))))
     (if remote-config
-        (rsync-project--run remote-config)
+        (if (rsync-project--test-connection remote-config)
+            (rsync-project--run remote-config)
+          (message "Can't connect remote, close auto save.")
+          (remove-hook 'after-save-hook #'rsync-project-auto-sync t))
       (message "Need use add this project"))))
 
 ;;;###autoload
@@ -249,6 +274,15 @@
   (interactive)
   (rsync-project-read-list)
   (message "remote: %s" (second (rsync-project-get-remote-config (project-root (project-current))))))
+
+;;;###autoload
+(defun rsync-project-re-auto-rsync ()
+  "Rsync re connect auto rsync."
+  (interactive)
+  (setq rsync-project--process nil)
+  (when rsync-project-sync-on-save
+    (add-hook 'after-save-hook #'rsync-project-auto-sync 0 t)
+    (message "Add rsync finish.")))
 
 (provide 'rsync-project-mode)
 ;;; rsync-project-mode.el ends here
