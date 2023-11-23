@@ -104,7 +104,18 @@
         (remote-port (third (second remote-config))))
     (= 0
        (shell-command
-        (format "ssh %s -o BatchMode=yes -o ConnectTimeout=1 %s true &>/dev/null"
+        ;; (format "ssh %s -o BatchMode=yes -o ConnectTimeout=1 %s true &>/dev/null"
+        ;;         (if remote-port
+        ;;             (if (not (= 22 remote-port))
+        ;;                 (format "-p %s" remote-port)
+        ;;               "")
+        ;;           "")
+        ;;         (if (and remote-user remote-host)
+        ;;             (format "%s@%s"
+        ;;                     remote-user
+        ;;                     remote-host)
+        ;;           remote-host))
+        (format "ssh -o ConnectTimeout=1 -q %s %s &>/dev/null"
                 (if remote-port
                     (if (not (= 22 remote-port))
                         (format "-p %s" remote-port)
