@@ -49,6 +49,14 @@
 (defvar rsync-project--process-exit-hook nil
   "Closure defining the process cleanup code.")
 
+(defface rsync-project-start-face
+  '((t :foreground "green"))
+  "Face for 'Start' state.")
+
+(defface rsync-project-stop-face
+  '((t :foreground "red"))
+  "Face for 'Stop' state.")
+
 (define-minor-mode rsync-project-mode
   "Toggle rsync project mode"
   :init-value nil
@@ -91,17 +99,17 @@
       (setq rsync-project-remote-list nil))))
 
 (defun rsync-project-get-remote-config (project-path)
-  (find (file-truename project-path)
-        rsync-project-remote-list
-        :key #'(lambda (elm)
-                 (file-truename
-                  (first elm)))
-        :test #'string=))
+  (cl-find (file-truename project-path)
+           rsync-project-remote-list
+           :key #'(lambda (elm)
+                    (file-truename
+                     (cl-first elm)))
+           :test #'string=))
 
 (defun rsync-project--test-connection (remote-config)
-  (let ((remote-user (first (second remote-config)))
-        (remote-host (second (second remote-config)))
-        (remote-port (third (second remote-config))))
+  (let ((remote-user (cl-first (cl-second remote-config)))
+        (remote-host (cl-second (cl-second remote-config)))
+        (remote-port (cl-third (cl-second remote-config))))
     (= 0
        (shell-command
         ;; (format "ssh %s -o BatchMode=yes -o ConnectTimeout=1 %s true &>/dev/null"
@@ -128,12 +136,12 @@
                   remote-host))))))
 
 (defun rsync-project-build-rsync-args (remote-config)
-  (let ((local-path (first remote-config))
-        (remote-user (first (second remote-config)))
-        (remote-host (second (second remote-config)))
-        (remote-port (third (second remote-config)))
-        (remote-path (fourth (second remote-config)))
-        (ignore-list (third remote-config)))
+  (let ((local-path (cl-first remote-config))
+        (remote-user (cl-first (cl-second remote-config)))
+        (remote-host (cl-second (cl-second remote-config)))
+        (remote-port (cl-third (cl-second remote-config)))
+        (remote-path (fourth (cl-second remote-config)))
+        (ignore-list (cl-third remote-config)))
     `("-avtP"
       ,@(if remote-port
             (if (not (= 22 remote-port))
@@ -153,12 +161,12 @@
                  remote-path)))))
 
 (defun rsync-project-generate-rsync-cmd (ssh-config)
-  (let ((local-path (first ssh-config))
-        (remote-user (first (second ssh-config)))
-        (remote-host (second (second ssh-config)))
-        (remote-port (third (second ssh-config)))
-        (remote-path (fourth (second ssh-config)))
-        (ignore-list (third ssh-config)))
+  (let ((local-path (cl-first ssh-config))
+        (remote-user (cl-first (cl-second ssh-config)))
+        (remote-host (cl-second (cl-second ssh-config)))
+        (remote-port (cl-third (cl-second ssh-config)))
+        (remote-path (fourth (cl-second ssh-config)))
+        (ignore-list (cl-third ssh-config)))
     (format "rsync -avtP %s %s %s %s"
             (if remote-port
                 (if (not (= 22 remote-port))
@@ -179,6 +187,10 @@
               (format "%s:%s"
                       remote-host
                       remote-path)))))
+
+(defun rsync-project--check ()
+  "Project have remote"
+  (rsync-project-get-remote-config (project-root (project-current))))
 
 ;;;###autoload
 (defun rsync-project-add ()
@@ -220,9 +232,63 @@
         (progn
           (setf rsync-project-remote-list
                 (cl-remove-if #'(lambda (item)
-                                  (string= (first item)
-                                           (first ssh-config)))
+                                  (string= (cl-first item)
+                                           (cl-first ssh-config)))
                               rsync-project-remote-list))
+          (rsync-project-write-list))
+      (message "Now project not add rsync"))))
+
+;;;###autoload
+(defun rsync-project-add-ignore ()
+  "Remove now project in rsync list"
+  (interactive)
+  (rsync-project-read-list)
+  (let ((ssh-config (rsync-project-get-remote-config (project-root (project-current))))
+        (add-ignore-filep t))
+    (if ssh-config
+        (let ((new-ignore-file-list (cl-third ssh-config))
+              (project-root-dir (cl-first ssh-config)))
+          (setf rsync-project-remote-list
+                (cl-remove-if #'(lambda (item)
+                                  (string= (cl-first item)
+                                           (cl-first ssh-config)))
+                              rsync-project-remote-list))
+          (while add-ignore-filep
+            (add-to-list 'new-ignore-file-list
+                         (f-filename (read-file-name "Ignore path:" project-root-dir)))
+            (setf add-ignore-filep
+                  (yes-or-no-p (format "(%s)Add ignore files:" new-ignore-file-list))))
+          (add-to-list 'rsync-project-remote-list
+                       (list project-root-dir
+                             (cl-second ssh-config)
+                             new-ignore-file-list))
+          (rsync-project-write-list))
+      (message "Now project not add rsync"))))
+
+;;;###autoload
+(defun rsync-project-remove-ignore ()
+  "Remove now project in rsync list"
+  (interactive)
+  (rsync-project-read-list)
+  (let ((ssh-config (rsync-project-get-remote-config (project-root (project-current)))))
+    (if ssh-config
+        (let ((new-ignore-file-list (cl-third ssh-config))
+              (project-root-dir (cl-first ssh-config)))
+          (setf rsync-project-remote-list
+                (cl-remove-if #'(lambda (item)
+                                  (string= (cl-first item)
+                                           (cl-first ssh-config)))
+                              rsync-project-remote-list))
+          (let ((choice (completing-read "Choose an ignore: " new-ignore-file-list)))
+            (setf new-ignore-file-list
+                  (cl-remove-if #'(lambda (item)
+                                    (string= choice
+                                             item))
+                                new-ignore-file-list)))
+          (add-to-list 'rsync-project-remote-list
+                       (list project-root-dir
+                             (cl-second ssh-config)
+                             new-ignore-file-list))
           (rsync-project-write-list))
       (message "Now project not add rsync"))))
 
@@ -240,7 +306,7 @@
 (defun rsync-project--run (remote-config)
   (if rsync-project--process
       (message "Cannot start a new rsync process until the existing one finishes.")
-    (let ((rsync-buffer-name (format "*Rsync %s*" (f-filename (first remote-config)))))
+    (let ((rsync-buffer-name (format "*Rsync %s*" (f-filename (cl-first remote-config)))))
       (setq rsync-project--process
             (apply
              #'start-process
@@ -279,12 +345,16 @@
           (remove-hook 'after-save-hook #'rsync-project-auto-sync t))
       (message "Need use add this project"))))
 
-;;;###autoload
-(defun rsync-project-show-remote-config ()
-  "Show now project remote config."
-  (interactive)
-  (rsync-project-read-list)
-  (message "remote: %s" (second (rsync-project-get-remote-config (project-root (project-current))))))
+(defun rsync-project-format-remote-config (ssh-config)
+  "Get remote path"
+  (let* ((remote-config (cl-second ssh-config))
+         (user (cl-first remote-config))
+         (host (cl-second remote-config))
+         (port (cl-third remote-config))
+         (path (cl-fourth remote-config)))
+    (if (and user port)
+        (format "%s@%s:%s:~/%s" user host port path)
+      (format "%s:~/%s" host path))))
 
 ;;;###autoload
 (defun rsync-project-re-auto-rsync ()
@@ -294,6 +364,60 @@
   (when rsync-project-sync-on-save
     (add-hook 'after-save-hook #'rsync-project-auto-sync 0 t)
     (message "Add rsync finish.")))
+
+;;; menu
+;;;###autoload (autoload 'rsync-project-dispatch "rsync-project-mode" nil t)
+(transient-define-prefix rsync-project-dispatch ()
+  "Rsync project menu"
+  [:description
+   rsync-project--selectd-project-description
+   :pad-keys t
+   ("c" "Connect remote" rsync-project-add)
+   ("d" "Delete remote" rsync-project-remove :if rsync-project--check)]
+  ["Options"
+   ("a" (lambda ()
+          (format "%s auto sync"
+                  (if rsync-project-sync-on-save
+                      (propertize "Enable" 'face 'rsync-project-start-face)
+                    (propertize "Disable" 'face 'rsync-project-stop-face))))
+    rsync-project-sync-on-save-toggle
+    :transient t)]
+  [["Sync"
+    :if rsync-project--check
+    ("r" "Rsync all" rsync-project-sync-all)
+    ("n" "Rsync re connect auto rsync" rsync-project-re-auto-rsync)]
+   ["Ignore"
+    :if rsync-project--check
+    ("i a" "Add ignore" rsync-project-add-ignore
+     :transient t)
+    ("i r" "Remove ignore" rsync-project-remove-ignore
+     :transient t)]]
+  [("q" "Quit" transient-quit-one)]
+  (interactive)
+  (if (and (project-current) rsync-project-mode)
+      (transient-setup 'rsync-project-dispatch)
+    (message "not a project or open rsync-project-mode")))
+
+(defun rsync-project-sync-on-save-toggle ()
+  "Toggle rsync-project-sync-on-save"
+  (interactive)
+  (setq rsync-project-sync-on-save (not rsync-project-sync-on-save))
+  (customize-save-variable 'rsync-project-sync-on-save rsync-project-sync-on-save))
+
+(defun rsync-project--selectd-project-description ()
+  "Return a Transient menu headline to indicate the currently selected project."
+  (rsync-project-read-list)
+  (let* ((root (project-root (project-current)))
+         (ssh-config (rsync-project-get-remote-config root)))
+    (format (propertize "Project: %s %s" 'face 'transient-heading)
+            (if root
+                (propertize root 'face 'transient-value)
+              (propertize "None detected" 'face 'transient-inapt-suffix))
+            (if ssh-config
+                (format (propertize "Remote: %s\nIgnore list: %s" 'face 'transient-heading)
+                        (propertize (rsync-project-format-remote-config ssh-config) 'face 'transient-value)
+                        (propertize (format "%s" (cl-third ssh-config)) 'face 'transient-help))
+              ""))))
 
 (provide 'rsync-project-mode)
 ;;; rsync-project-mode.el ends here
