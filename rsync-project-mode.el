@@ -16,6 +16,7 @@
 (require 'project)
 (require 'f)
 (require 's)
+(require 'transient)
 
 (defgroup rsync-project nil
   "Convenient project remote synchronization."
