@@ -373,7 +373,7 @@
   [:description
    rsync-project--selectd-project-description
    :pad-keys t
-   ("c" "Connect remote" rsync-project-add)
+   ("c" "Connect remote" rsync-project-add :if-not rsync-project--check)
    ("d" "Delete remote" rsync-project-remove :if rsync-project--check)]
   ["Options"
    ("a" (lambda ()
