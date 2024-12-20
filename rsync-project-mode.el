@@ -24,7 +24,7 @@
   :prefix "rsync-project-"
   :link '(url-link "https://github.com/lizqwerscott/rsync-project-mode"))
 
-(defcustom rsync-project-sync-on-save nil
+(defcustom rsync-project-auto-rsyncp nil
   "Whether to activate a hook that synchronizes the project after each save."
   :group 'rsync-project
   :type 'boolean)
@@ -44,11 +44,8 @@
 (defvar-local rsync-project-mode nil
   "Whether rsync-mode is enabled.")
 
-(defvar-local rsync-project--process nil
-  "Rsync process object.")
-
-(defvar rsync-project--process-exit-hook nil
-  "Closure defining the process cleanup code.")
+(defvar rsync-project-process (make-hash-table :test #'equal)
+  "Rsync project process")
 
 (defface rsync-project-start-face
   '((t :foreground "green"))
@@ -67,9 +64,9 @@
     (when project-now
       (if (rsync-project-get-remote-config (project-root project-now))
           (if (not rsync-project-mode)
-              (remove-hook 'after-save-hook #'rsync-project-auto-sync t)
+              (rsync-project-auto-sync-stop)
             (when rsync-project-sync-on-save
-              (add-hook 'after-save-hook #'rsync-project-auto-sync 0 t)))
+              (rsync-project-auto-sync-start)))
         ;; (message "Failed to activate rsync-project-mode: No remote configuration for rsync-project-mode found.")
         ))))
 
@@ -231,6 +228,7 @@
   (let ((ssh-config (rsync-project-get-remote-config (project-root (project-current)))))
     (if ssh-config
         (progn
+          (rsync-project-auto-sync-stop)
           (setf rsync-project-remote-list
                 (cl-remove-if #'(lambda (item)
                                   (string= (cl-first item)
@@ -263,7 +261,8 @@
                        (list project-root-dir
                              (cl-second ssh-config)
                              new-ignore-file-list))
-          (rsync-project-write-list))
+          (rsync-project-write-list)
+          (call-interactively #'rsync-project-re-auto-rsync))
       (message "Now project not add rsync"))))
 
 ;;;###autoload
@@ -290,7 +289,8 @@
                        (list project-root-dir
                              (cl-second ssh-config)
                              new-ignore-file-list))
-          (rsync-project-write-list))
+          (rsync-project-write-list)
+          (call-interactively #'rsync-project-re-auto-rsync))
       (message "Now project not add rsync"))))
 
 ;;;###autoload
@@ -304,46 +304,51 @@
                                rsync-buffer))
       (message "Need use add this project"))))
 
-(defun rsync-project--run (remote-config)
-  (if rsync-project--process
-      (message "Cannot start a new rsync process until the existing one finishes.")
-    (let ((rsync-buffer-name (format "*Rsync %s*" (f-filename (cl-first remote-config)))))
-      (setq rsync-project--process
-            (apply
-             #'start-process
-             `("rsync-project"
-               ,rsync-buffer-name
-               "rsync"
-               ,@(rsync-project-build-rsync-args remote-config))))
-      (with-current-buffer rsync-buffer-name
-        (goto-char (point-max))
-        (skip-chars-backward "\n[:space:]")
-        (require 'time-stamp)
-        (insert (concat "\n\n" (time-stamp-string) "\n")))
-      (setq rsync-project--process-exit-hook
-            (lambda (_ event)
-              (setq rsync-project--process nil)
-              (with-current-buffer (current-buffer)
-                (when rsync-project-mode
-                  ;; (spinner-stop rsync--spinner)
-                  )
-                )
-              (if (string-equal event "finished\n")
-                  (message "Rsync complete.")
-                (message "Rsync process received abnormal event %s" event)
-                (message "Close auto save.")
-                (remove-hook 'after-save-hook #'rsync-project-auto-sync t))))
-      (set-process-sentinel rsync-project--process
-                            #'(lambda (proc event)
-                                (funcall rsync-project--process-exit-hook proc event))))))
-
-(defun rsync-project-auto-sync ()
+(defun rsync-project-auto-sync-start ()
   (let ((remote-config (rsync-project-get-remote-config (project-root (project-current)))))
     (if remote-config
         (if (rsync-project--test-connection remote-config)
-            (rsync-project--run remote-config)
-          (message "Can't connect remote, close auto save.")
-          (remove-hook 'after-save-hook #'rsync-project-auto-sync t))
+            (when (not (gethash (project-current)
+                              rsync-project-process))
+              (let ((rsync-buffer-name (format "*Rsync %s*" (f-filename (cl-first remote-config))))
+                    (rsync-args (rsync-project-build-rsync-args remote-config))
+                    (rsync-project--process nil))
+                (setq rsync-project--process
+                      (apply
+                       #'start-process
+                       `("rsync-project"
+                         ,rsync-buffer-name
+                         "watchexec"
+                         ,@(append (list "--ignore-nothing"
+                                         "rsync")
+                                   rsync-args))))
+                (with-current-buffer rsync-buffer-name
+                  (goto-char (point-max))
+                  (skip-chars-backward "\n[:space:]")
+                  (require 'time-stamp)
+                  (insert (concat "\n\n" (time-stamp-string) "\n")))
+
+                (set-process-sentinel rsync-project--process
+                                      #'(lambda (proc event)
+                                          (message "%s start error: %s" (project-root (project-current)) event)))
+                (puthash (project-current)
+                         rsync-project--process
+                         rsync-project-process)))
+          (message "Can't connect remote, close auto save."))
+      (message "Need use add this project"))))
+
+(defun rsync-project-auto-sync-stop ()
+  (let ((remote-config (rsync-project-get-remote-config (project-root (project-current)))))
+    (if remote-config
+        (let ((project-process (gethash (project-current)
+                                        rsync-project-process)))
+          (if project-process
+              (progn
+                (delete-process project-process)
+                (setf (gethash (project-current)
+                               rsync-project-process)
+                      nil))
+            (message "%s: Not start auto save process" (project-root (project-current)))))
       (message "Need use add this project"))))
 
 (defun rsync-project-format-remote-config (ssh-config)
@@ -361,10 +366,19 @@
 (defun rsync-project-re-auto-rsync ()
   "Rsync re connect auto rsync."
   (interactive)
-  (setq rsync-project--process nil)
-  (when rsync-project-sync-on-save
-    (add-hook 'after-save-hook #'rsync-project-auto-sync 0 t)
-    (message "Add rsync finish.")))
+  (rsync-project-auto-sync-stop)
+  (rsync-project-auto-sync-start)
+  (message "Add rsync finish."))
+
+;;;###autoload
+(defun rsync-project-auto-rsync-toggle ()
+  "Toggle `rsync-project-auto-rsyncp'"
+  (interactive)
+  (if rsync-project-auto-rsyncp
+      (rsync-project-auto-sync-stop)
+    (rsync-project-auto-sync-start))
+  (setq rsync-project-auto-rsyncp (not rsync-project-auto-rsyncp))
+  (customize-save-variable 'rsync-project-auto-rsyncp rsync-project-auto-rsyncp))
 
 ;;; menu
 ;;;###autoload (autoload 'rsync-project-dispatch "rsync-project-mode" nil t)
@@ -378,10 +392,10 @@
   ["Options"
    ("a" (lambda ()
           (format "%s auto sync"
-                  (if rsync-project-sync-on-save
+                  (if rsync-project-auto-rsyncp
                       (propertize "Enable" 'face 'rsync-project-start-face)
                     (propertize "Disable" 'face 'rsync-project-stop-face))))
-    rsync-project-sync-on-save-toggle
+    rsync-project-auto-rsync-toggle
     :transient t)]
   [["Sync"
     :if rsync-project--check
@@ -398,12 +412,6 @@
   (if (and (project-current) rsync-project-mode)
       (transient-setup 'rsync-project-dispatch)
     (message "not a project or open rsync-project-mode")))
-
-(defun rsync-project-sync-on-save-toggle ()
-  "Toggle rsync-project-sync-on-save"
-  (interactive)
-  (setq rsync-project-sync-on-save (not rsync-project-sync-on-save))
-  (customize-save-variable 'rsync-project-sync-on-save rsync-project-sync-on-save))
 
 (defun rsync-project--selectd-project-description ()
   "Return a Transient menu headline to indicate the currently selected project."
