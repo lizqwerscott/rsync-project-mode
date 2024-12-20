@@ -141,7 +141,7 @@
         (remote-user (cl-first (cl-second remote-config)))
         (remote-host (cl-second (cl-second remote-config)))
         (remote-port (cl-third (cl-second remote-config)))
-        (remote-path (fourth (cl-second remote-config)))
+        (remote-path (cl-fourth (cl-second remote-config)))
         (ignore-list (cl-third remote-config)))
     `("-avtP"
       ,@(if remote-port
@@ -166,7 +166,7 @@
         (remote-user (cl-first (cl-second ssh-config)))
         (remote-host (cl-second (cl-second ssh-config)))
         (remote-port (cl-third (cl-second ssh-config)))
-        (remote-path (fourth (cl-second ssh-config)))
+        (remote-path (cl-fourth (cl-second ssh-config)))
         (ignore-list (cl-third ssh-config)))
     (format "rsync -avtP %s %s %s %s"
             (if remote-port
