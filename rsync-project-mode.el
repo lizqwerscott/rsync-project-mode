@@ -334,7 +334,9 @@
 
           (set-process-sentinel rsync-project--process
                                 #'(lambda (proc event)
-                                    (message "%s start error: %s" (project-root (project-current)) event)))
+                                    (if (or (s-contains? "kill" event) (s-contains? "finish" event))
+                                        (message "%s rsync finish" (project-root (project-current)))
+                                      (message "%s rsync run error: %s" (project-root (project-current)) event))))
           (puthash (project-current)
                    rsync-project--process
                    rsync-project-process)))
