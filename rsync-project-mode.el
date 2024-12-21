@@ -94,8 +94,20 @@
             rsync-project-list-file)
       (setq rsync-project-remote-list nil))))
 
-(defun rsync-project--get-now-project-path ()
-  (file-truename (project-root (project-current))))
+(defmacro rsync-project-with-update-list (remote-config-name &rest body)
+  (declare (indent 1) (debug (form def-body)))
+  `(progn
+     (rsync-project-read-list)
+     (setf rsync-project-remote-list
+           (mapcar (lambda (,remote-config-name)
+                     (if (string= (cl-first ,remote-config-name)
+                                  (rsync-project--get-now-project-path))
+                         (progn
+                           ,@body)
+                       ,remote-config-name))
+                   rsync-project-remote-list))
+     (rsync-project-write-list)
+     (call-interactively #'rsync-project-re-auto-rsync)))
 
 (defun rsync-project-get-remote-config (project-path)
   (cl-find (file-truename project-path)
@@ -227,14 +239,15 @@
   "Remove now project in rsync list"
   (interactive)
   (rsync-project-read-list)
-  (let ((ssh-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
-    (if ssh-config
+  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
+    (if remote-config
         (progn
-          (rsync-project-auto-sync-stop)
+          (when (cl-fourth remote-config)
+            (rsync-project-auto-sync-stop remote-config))
           (setf rsync-project-remote-list
                 (cl-remove-if #'(lambda (item)
                                   (string= (cl-first item)
-                                           (cl-first ssh-config)))
+                                           (cl-first remote-config)))
                               rsync-project-remote-list))
           (rsync-project-write-list))
       (message "Now project not add rsync"))))
@@ -244,59 +257,35 @@
 (defun rsync-project-add-ignore ()
   "Remove now project in rsync list"
   (interactive)
-  (rsync-project-read-list)
-  (let ((ssh-config (rsync-project-get-remote-config (project-root (project-current))))
-        (add-ignore-filep t))
-    (if ssh-config
-        (let ((new-ignore-file-list (cl-third ssh-config))
-              (project-root-dir (cl-first ssh-config)))
-          (setf rsync-project-remote-list
-                (cl-remove-if #'(lambda (item)
-                                  (string= (cl-first item)
-                                           (cl-first ssh-config)))
-                              rsync-project-remote-list))
-          (while add-ignore-filep
-            (add-to-list 'new-ignore-file-list
-                         (f-filename (read-file-name "Ignore path:" project-root-dir)))
-            (setf add-ignore-filep
-                  (yes-or-no-p (format "(%s)Add ignore files:" new-ignore-file-list))))
-          (add-to-list 'rsync-project-remote-list
-                       (list project-root-dir
-                             (cl-second ssh-config)
-                             new-ignore-file-list
-                             (cl-fourth ssh-config)))
-          (rsync-project-write-list)
-          (call-interactively #'rsync-project-re-auto-rsync))
-      (message "Now project not add rsync"))))
+  (rsync-project-with-update-list remote-config
+    (let ((add-ignore-filep t)
+          (new-ignore-file-list (cl-third remote-config))
+          (project-root-dir (cl-first remote-config)))
+      (while add-ignore-filep
+        (add-to-list 'new-ignore-file-list
+                     (f-filename (read-file-name "Ignore path:" project-root-dir)))
+        (setf add-ignore-filep
+              (yes-or-no-p (format "(%s)Add ignore files:" new-ignore-file-list))))
+      (list project-root-dir
+            (cl-second remote-config)
+            new-ignore-file-list
+            (cl-fourth remote-config)))))
 
 ;;;###autoload
 (defun rsync-project-remove-ignore ()
   "Remove now project in rsync list"
   (interactive)
-  (rsync-project-read-list)
-  (let ((ssh-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
-    (if ssh-config
-        (let ((new-ignore-file-list (cl-third ssh-config))
-              (project-root-dir (cl-first ssh-config)))
-          (setf rsync-project-remote-list
-                (cl-remove-if #'(lambda (item)
-                                  (string= (cl-first item)
-                                           (cl-first ssh-config)))
-                              rsync-project-remote-list))
-          (let ((choice (completing-read "Choose an ignore: " new-ignore-file-list)))
-            (setf new-ignore-file-list
-                  (cl-remove-if #'(lambda (item)
-                                    (string= choice
-                                             item))
-                                new-ignore-file-list)))
-          (add-to-list 'rsync-project-remote-list
-                       (list project-root-dir
-                             (cl-second ssh-config)
-                             new-ignore-file-list
-                             (cl-fourth ssh-config)))
-          (rsync-project-write-list)
-          (call-interactively #'rsync-project-re-auto-rsync))
-      (message "Now project not add rsync"))))
+  (rsync-project-with-update-list remote-config
+    (let* ((new-ignore-file-list (cl-third remote-config))
+           (project-root-dir (cl-first remote-config))
+           (choice (completing-read "Choose an ignore: " new-ignore-file-list)))
+      (list project-root-dir
+            (cl-second remote-config)
+            (cl-remove-if #'(lambda (remote-config)
+                              (string= choice
+                                       remote-config))
+                          new-ignore-file-list)
+            (cl-fourth remote-config)))))
 
 ;;;###autoload
 (defun rsync-project-sync-all ()
@@ -381,22 +370,14 @@
 (defun rsync-project-auto-rsync-toggle ()
   "Toggle every project auto rsyncp"
   (interactive)
-  (rsync-project-read-list)
-  (setf rsync-project-remote-list
-        (mapcar #'(lambda (item)
-                    (if (string= (cl-first item)
-                                 (rsync-project--get-now-project-path))
-                        (progn
-                          (if (cl-fourth item)
-                              (rsync-project-auto-sync-stop item)
-                            (rsync-project-auto-sync-start item))
-                          (list (cl-first item)
-                                (cl-second item)
-                                (cl-third item)
-                                (not (cl-fourth item))))
-                      item))
-                rsync-project-remote-list))
-  (rsync-project-write-list))
+  (rsync-project-with-update-list remote-config
+    (if (cl-fourth remote-config)
+        (rsync-project-auto-sync-stop remote-config)
+      (rsync-project-auto-sync-start remote-config))
+    (list (cl-first remote-config)
+          (cl-second remote-config)
+          (cl-third remote-config)
+          (not (cl-fourth remote-config)))))
 
 ;;; menu
 ;;;###autoload (autoload 'rsync-project-dispatch "rsync-project-mode" nil t)
