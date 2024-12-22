@@ -13,7 +13,10 @@ It also offers an option to automatically rsync the current project on every sav
      (require 'rsync-project-mode)
 
      ;; Need sync when save buffer.
-     (setq rsync-project-sync-on-save t)
+     (setq rsync-project-default-auto-rsyncp t)
+
+     ;; Whether to read the contents of =.gitignore= as filter content when creating a new remote project
+     (setq rsync-project-default-gitignorep t)
 
      (add-hook 'prog-mode-hook
                'rsync-project-mode)
@@ -26,9 +29,9 @@ It also offers an option to automatically rsync the current project on every sav
 - ~rsync-project-sync-all~: rsync all.
 - ~rsync-project-add-ignore~: add ignore
 - ~rsync-project-remove-ignore~: remove ignore
-
 *** Options
 - ~rsync-project-auto-rsyncp~: Whether to activate a hook that synchronizes the project after each save.
 - ~rsync-project-list-file~: File in which to save the list of known projects.
+- ~rsync-project-default-gitignorep~: Whether to read the contents of =.gitignore= as filter content when creating a new remote project.
 *** Alternatives
 - [[https://github.com/r-zip/rsync-mode.git][rsync-mode]]: Use ~.dir-locals.el~ store remote config.
