@@ -29,6 +29,11 @@
   :group 'rsync-project
   :type 'boolean)
 
+(defcustom rsync-project-default-gitignorep nil
+  "Whether to read the contents of `.gitignore' as filter content when creating a new remote project."
+  :group 'rsync-project
+  :type 'boolean)
+
 (defcustom rsync-project-list-file (if (boundp 'no-littering-var-directory )
                                        (f-join no-littering-var-directory
                                                "rsync-project-list-file.el")
@@ -168,12 +173,15 @@
          (remote-host (cl-getf ssh-config :host))
          (remote-port (cl-getf ssh-config :port))
          (remote-path (cl-getf ssh-config :remote-dir))
-         (ignore-list (cl-getf remote-config :ignore-file-list)))
+         (ignore-list (cl-getf remote-config :ignore-file-list))
+         (gitignorep (cl-getf remote-config :gitignorep)))
     `("-avtP"
       ,@(if remote-port
             (if (not (= 22 remote-port))
                 `("-e"
                   (format "\"ssh -p %d\"" remote-port))))
+      ,@(if gitignorep
+            (list "--filter=':- .gitignore'"))
       ,@(mapcar #'(lambda (dir)
                     (concat "--exclude=" dir))
                 ignore-list)
@@ -188,33 +196,14 @@
                  remote-path)))))
 
 (defun rsync-project-generate-rsync-cmd (remote-config)
-  (let* ((local-path (cl-getf remote-config :root-path))
-         (ssh-config (cl-getf remote-config :ssh-config))
-         (remote-user (cl-getf ssh-config :user))
-         (remote-host (cl-getf ssh-config :host))
-         (remote-port (cl-getf ssh-config :port))
-         (remote-path (cl-getf ssh-config :remote-dir))
-         (ignore-list (cl-getf remote-config :ignore-file-list)))
-    (format "rsync -avtP %s %s %s %s"
-            (if remote-port
-                (if (not (= 22 remote-port))
-                    (format "-e \"ssh -p %d \"" remote-port)
-                  )
-              "")
-            (string-join
-             (mapcar #'(lambda (dir)
-                         (concat "--exclude=" dir))
-                     ignore-list)
-             " ")
-            local-path
-            (if (and remote-user remote-host)
-                (format "%s@%s:%s"
-                        remote-user
-                        remote-host
-                        remote-path)
-              (format "%s:%s"
-                      remote-host
-                      remote-path)))))
+  (let ((rsync-args (rsync-project-build-rsync-args remote-config)))
+    (apply #'format
+           (append (list
+                    (concat "rsync -avtP "
+                            (s-join " "
+                                    (make-list (length rsync-args)
+                                               "%s"))))
+                   rsync-args))))
 
 (defun rsync-project--check ()
   "Project have remote"
@@ -247,6 +236,7 @@
                                                  :port (tramp-file-name-port remote-dir)
                                                  :remote-dir remote-dir-path)
                                :ignore-file-list ignore-file-list
+                               :gitignorep rsync-project-default-gitignorep
                                :auto-rsyncp rsync-project-default-auto-rsyncp))
             (rsync-project-write-list)))
       (message "Already add now project."))))
@@ -395,6 +385,16 @@
                                   (list :auto-rsyncp
                                         (not auto-rsyncp))))))
 
+;;;###autoload
+(defun rsync-project-gitignorep-toggle ()
+  "Toggle project gitignorep"
+  (interactive)
+  (rsync-project-with-update-list remote-config
+    (rsync-project--update-item remote-config
+                                (list :gitignorep
+                                      (not (cl-getf remote-config :gitignorep)))))
+  (call-interactively #'rsync-project-re-auto-rsync))
+
 ;;; menu
 ;;;###autoload (autoload 'rsync-project-dispatch "rsync-project-mode" nil t)
 (transient-define-prefix rsync-project-dispatch ()
@@ -406,6 +406,8 @@
    ("d" "Delete remote" rsync-project-remove :if rsync-project--check)]
   ["Options"
    ("a" rsync-project--get-auto-rsyncp rsync-project-auto-rsync-toggle
+    :transient t)
+   ("g" rsync-project--get-gitignorep rsync-project-gitignorep-toggle
     :transient t)]
   [["Sync"
     :if rsync-project--check
@@ -445,6 +447,17 @@
     (if remote-config
         (format "%s auto sync"
                 (if (cl-getf remote-config :auto-rsyncp)
+                    (propertize "Enable" 'face 'rsync-project-start-face)
+                  (propertize "Disable" 'face 'rsync-project-stop-face)))
+      (message "Need use add this project"))))
+
+(defun rsync-project--get-gitignorep ()
+  "Return now project gitignorep state"
+  (rsync-project-read-list)
+  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
+    (if remote-config
+        (format "%s filter gitignore"
+                (if (cl-getf remote-config :gitignorep)
                     (propertize "Enable" 'face 'rsync-project-start-face)
                   (propertize "Disable" 'face 'rsync-project-stop-face)))
       (message "Need use add this project"))))
