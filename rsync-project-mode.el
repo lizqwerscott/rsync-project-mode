@@ -220,7 +220,7 @@
               (remote-dir (tramp-dissect-file-name (read-file-name "Remote dir:" "/ssh:")))
               (add-ignore-filep (yes-or-no-p "Add ignore files:")))
           (let ((remote-dir-path (tramp-file-name-localname remote-dir)))
-            (when (not (string= (file-name-base remote-dir-path)
+            (when (not (string= (file-name-nondirectory (directory-file-name remote-dir-path))
                               name))
               (setf remote-dir-path
                     (f-join remote-dir-path name)))
