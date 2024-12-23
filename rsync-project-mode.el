@@ -199,7 +199,7 @@
   (let ((rsync-args (rsync-project-build-rsync-args remote-config)))
     (apply #'format
            (append (list
-                    (concat "rsync -avtP "
+                    (concat "rsync "
                             (s-join " "
                                     (make-list (length rsync-args)
                                                "%s"))))
