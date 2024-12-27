@@ -287,7 +287,7 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
         (setf add-ignore-filep
               (yes-or-no-p (format "(%s)Add ignore files?" new-ignore-file-list))))
       (rsync-project--update-item remote-config
-                     (list :ignore-file-list new-ignore-file-list))))
+                                  (list :ignore-file-list new-ignore-file-list))))
   (call-interactively #'rsync-project-re-auto-rsync))
 
 ;;;###autoload
