@@ -5,7 +5,7 @@
 ;; Author: lizqwer scott <lizqwerscott@gmail.com>
 ;; URL: https://github.com/lizqwerscott/rsync-project-mode
 ;; Version: 0.1.0
-;; Keywords: comm
+;; Keywords: rsync, project
 
 ;;; Commentary:
 
