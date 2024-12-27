@@ -1,4 +1,4 @@
-;;; rsync-project-mode.el --- Rsync project to remote machines  -*- lexical-binding: t; coding: utf-8 -*-
+;;; rsync-project-mode.el --- Rsync project to remote machines  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  lizqwer scott
 
@@ -49,7 +49,7 @@
   "Whether rsync-mode is enabled.")
 
 (defvar rsync-project-process (make-hash-table :test #'equal)
-  "Rsync project process")
+  "Rsync project process.")
 
 (defface rsync-project-start-face
   '((t :foreground "green"))
@@ -60,7 +60,7 @@
   "Face for 'Stop' state.")
 
 (define-minor-mode rsync-project-mode
-  "Toggle rsync project mode"
+  "Toggle rsync project mode."
   :init-value nil
   :group 'rsync-project
   (rsync-project-read-list)
@@ -99,6 +99,7 @@
       (setq rsync-project-remote-list nil))))
 
 (defmacro rsync-project-with-update-list (remote-config-name &rest body)
+  "Execute BODY after REMOTE-CONFIG-NAME find in all remote list."
   (declare (indent 1) (debug (form def-body)))
   `(progn
      (rsync-project-read-list)
@@ -113,6 +114,7 @@
      (rsync-project-write-list)))
 
 (defun rsync-project--update-item (plist new-key-values)
+  "Update the PLIST with corresponding values from NEW-KEY-VALUES for matching keys."
   (let ((new-plist nil))
     (cl-loop for (key value) on plist by #'cddr
              do (let ((new-value (cl-getf new-key-values key)))
@@ -125,9 +127,13 @@
     new-plist))
 
 (defun rsync-project--get-now-project-path ()
+  "Retrieve the absolute path of the current project's root directory."
   (file-truename (project-root (project-current))))
 
 (defun rsync-project-get-remote-config (project-path)
+  "Retrieve the remote configuration for the given PROJECT-PATH.
+The function searches `rsync-project-remote-list' for a matching
+remote configuration based on the truename of PROJECT-PATH."
   (cl-find (file-truename project-path)
            rsync-project-remote-list
            :key #'(lambda (elm)
@@ -136,6 +142,9 @@
            :test #'string=))
 
 (defun rsync-project--test-connection (remote-config)
+  "Test connection to the remote host in REMOTE-CONFIG.
+REMOTE-CONFIG is a plist containing SSH configuration details,
+such as user, host, and port. Returns t if the connection is successful, nil otherwise."
   (let* ((ssh-config (cl-getf remote-config :ssh-config))
          (remote-user (cl-getf ssh-config :user))
          (remote-host (cl-getf ssh-config :host))
@@ -166,6 +175,9 @@
                   remote-host))))))
 
 (defun rsync-project-build-rsync-args (remote-config)
+  "Build rsync command arguments based on REMOTE-CONFIG.
+REMOTE-CONFIG is a plist containing configuration details such as
+local path, SSH configuration, ignore list, and gitignore settings."
   (let* ((local-path (cl-getf remote-config :root-path))
          (ssh-config (cl-getf remote-config :ssh-config))
          (remote-user (cl-getf ssh-config :user))
@@ -195,6 +207,8 @@
                  remote-path)))))
 
 (defun rsync-project-generate-rsync-cmd (remote-config)
+  "Generate a rsync command string based on the provided REMOTE-CONFIG.
+REMOTE-CONFIG should be a configuration object containing rsync arguments."
   (let ((rsync-args (rsync-project-build-rsync-args remote-config)))
     (apply #'format
            (append (list
@@ -205,19 +219,19 @@
                    rsync-args))))
 
 (defun rsync-project--check ()
-  "Project have remote"
+  "Project have remote."
   (rsync-project-get-remote-config (rsync-project--get-now-project-path)))
 
 ;;;###autoload
 (defun rsync-project-add ()
-  "Add now project to rsync list"
+  "Add now project to rsync list."
   (interactive)
   (let ((project-root-dir (rsync-project--get-now-project-path))
         (name (project-name (project-current))))
     (if (not (rsync-project-get-remote-config project-root-dir))
         (let ((ignore-file-list (list ".git"))
               (remote-dir (tramp-dissect-file-name (read-file-name "Remote dir:" "/ssh:")))
-              (add-ignore-filep (yes-or-no-p "Add ignore files:")))
+              (add-ignore-filep (yes-or-no-p "Add ignore files?")))
           (let ((remote-dir-path (tramp-file-name-localname remote-dir)))
             (unless (string= (file-name-nondirectory (directory-file-name remote-dir-path))
                              name)
@@ -227,7 +241,7 @@
               (cl-pushnew (f-filename (read-file-name "Ignore path:" project-root-dir))
                           ignore-file-list)
               (setf add-ignore-filep
-                    (yes-or-no-p (format "(%s)Add ignore files:" ignore-file-list))))
+                    (yes-or-no-p (format "(%s)Add ignore files?" ignore-file-list))))
             (add-to-list 'rsync-project-remote-list
                          (list :root-path project-root-dir
                                :ssh-config (list :user (tramp-file-name-user remote-dir)
@@ -242,7 +256,7 @@
 
 ;;;###autoload
 (defun rsync-project-remove ()
-  "Remove now project in rsync list"
+  "Remove now project in rsync list."
   (interactive)
   (rsync-project-read-list)
   (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
@@ -261,7 +275,7 @@
 ;;; handle ignore list
 ;;;###autoload
 (defun rsync-project-add-ignore ()
-  "Remove now project in rsync list"
+  "Remove now project in rsync list."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let ((add-ignore-filep t)
@@ -271,14 +285,14 @@
         (cl-pushnew (f-filename (read-file-name "Ignore path:" project-root-dir))
                     new-ignore-file-list)
         (setf add-ignore-filep
-              (yes-or-no-p (format "(%s)Add ignore files:" new-ignore-file-list))))
+              (yes-or-no-p (format "(%s)Add ignore files?" new-ignore-file-list))))
       (rsync-project--update-item remote-config
                      (list :ignore-file-list new-ignore-file-list))))
   (call-interactively #'rsync-project-re-auto-rsync))
 
 ;;;###autoload
 (defun rsync-project-remove-ignore ()
-  "Remove now project in rsync list"
+  "Remove now project in rsync list."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let* ((new-ignore-file-list (cl-getf remote-config :ignore-file-list))
@@ -305,6 +319,7 @@
 
 ;;; auto sync
 (defun rsync-project-auto-sync-start (remote-config)
+  "Start the background monitor for REMOTE-CONFIG's project directory. It auto-syncs to the remote."
   (if (rsync-project--test-connection remote-config)
       (unless (gethash (rsync-project--get-now-project-path)
                        rsync-project-process)
@@ -337,6 +352,7 @@
     (message "Can't connect remote, close auto save.")))
 
 (defun rsync-project-auto-sync-stop (remote-config)
+  "Stop the background monitor for REMOTE-CONFIG's project directory."
   (let ((project-process (gethash (rsync-project--get-now-project-path)
                                   rsync-project-process)))
     (if project-process
@@ -348,7 +364,7 @@
       (message "%s: Not start auto save process" (rsync-project--get-now-project-path)))))
 
 (defun rsync-project-format-remote-config (remote-config)
-  "Get remote path"
+  "Get REMOTE-CONFIG's remote path."
   (let* ((ssh-config (cl-getf remote-config :ssh-config))
          (user (cl-getf ssh-config :user))
          (host (cl-getf ssh-config :host))
@@ -373,7 +389,7 @@
 
 ;;;###autoload
 (defun rsync-project-auto-rsync-toggle ()
-  "Toggle every project auto rsyncp"
+  "Toggle every project auto rsyncp."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let ((auto-rsyncp (cl-getf remote-config :auto-rsyncp)))
@@ -386,7 +402,7 @@
 
 ;;;###autoload
 (defun rsync-project-gitignorep-toggle ()
-  "Toggle project gitignorep"
+  "Toggle project gitignorep."
   (interactive)
   (rsync-project-with-update-list remote-config
     (rsync-project--update-item remote-config
@@ -397,7 +413,7 @@
 ;;; menu
 ;;;###autoload (autoload 'rsync-project-dispatch "rsync-project-mode" nil t)
 (transient-define-prefix rsync-project-dispatch ()
-  "Rsync project menu"
+  "Rsync project menu."
   [:description
    rsync-project--selectd-project-description
    :pad-keys t
@@ -440,7 +456,7 @@
               ""))))
 
 (defun rsync-project--get-auto-rsyncp ()
-  "Return now project auto rsyncp state"
+  "Return now project auto rsyncp state."
   (rsync-project-read-list)
   (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
     (if remote-config
@@ -451,7 +467,7 @@
       (message "Need use add this project"))))
 
 (defun rsync-project--get-gitignorep ()
-  "Return now project gitignorep state"
+  "Return now project gitignorep state."
   (rsync-project-read-list)
   (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
     (if remote-config
