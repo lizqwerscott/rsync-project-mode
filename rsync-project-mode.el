@@ -1,4 +1,3 @@
-
 ;;; rsync-project-mode.el --- Rsync project to remote machines  -*- lexical-binding: t; coding: utf-8 -*-
 
 ;; Copyright (C) 2023  lizqwer scott
