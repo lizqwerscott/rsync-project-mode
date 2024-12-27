@@ -224,8 +224,8 @@
               (setf remote-dir-path
                     (f-join remote-dir-path name)))
             (while add-ignore-filep
-              (add-to-list 'ignore-file-list
-                           (f-filename (read-file-name "Ignore path:" project-root-dir)))
+              (cl-pushnew (f-filename (read-file-name "Ignore path:" project-root-dir))
+                          ignore-file-list)
               (setf add-ignore-filep
                     (yes-or-no-p (format "(%s)Add ignore files:" ignore-file-list))))
             (add-to-list 'rsync-project-remote-list
@@ -268,12 +268,12 @@
           (new-ignore-file-list (cl-getf remote-config :ignore-file-list))
           (project-root-dir (cl-getf remote-config :root-path)))
       (while add-ignore-filep
-        (add-to-list 'new-ignore-file-list
-                     (f-filename (read-file-name "Ignore path:" project-root-dir)))
+        (cl-pushnew (f-filename (read-file-name "Ignore path:" project-root-dir))
+                    new-ignore-file-list)
         (setf add-ignore-filep
               (yes-or-no-p (format "(%s)Add ignore files:" new-ignore-file-list))))
       (rsync-project--update-item remote-config
-                                  (list :ignore-file-list new-ignore-file-list))))
+                     (list :ignore-file-list new-ignore-file-list))))
   (call-interactively #'rsync-project-re-auto-rsync))
 
 ;;;###autoload
