@@ -64,7 +64,8 @@
   :init-value nil
   :group 'rsync-project
   (rsync-project-read-list)
-  (when-let* ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
+  (when-let* ((project-root (project-current))
+              (remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
     (let ((remote-state (gethash (rsync-project--get-now-project-path)
                                  rsync-project-states)))
       (unless remote-state
