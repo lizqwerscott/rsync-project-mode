@@ -48,8 +48,8 @@
 (defvar-local rsync-project-mode nil
   "Whether rsync-mode is enabled.")
 
-(defvar rsync-project-process (make-hash-table :test #'equal)
-  "Rsync project process.")
+(defvar rsync-project-states (make-hash-table :test #'equal)
+  "Rsync project remote states and process")
 
 (defface rsync-project-start-face
   '((t :foreground "green"))
@@ -64,13 +64,23 @@
   :init-value nil
   :group 'rsync-project
   (rsync-project-read-list)
-  (let ((project-now (project-current)))
-    (when project-now
-      (if-let* ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
-          (if (not rsync-project-mode)
-              (rsync-project-auto-sync-stop remote-config)
-            (when (cl-getf remote-config :auto-rsyncp)
-              (rsync-project-auto-sync-start remote-config)))))))
+  (when-let* ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
+    (let ((remote-state (gethash (rsync-project--get-now-project-path)
+                                 rsync-project-states)))
+      (unless remote-state
+        (let ((connectp (rsync-project--test-connection remote-config)))
+          (unless connectp
+            (message "%s remote can't connect"
+                     (plist-get (plist-get remote-config :ssh-config)
+                                :host)))
+          (puthash (rsync-project--get-now-project-path)
+                   (list :connectp connectp
+                         :process nil)
+                   rsync-project-states)))
+      (if (not rsync-project-mode)
+          (rsync-project-auto-sync-stop remote-config)
+        (when (plist-get remote-config :auto-rsyncp)
+          (rsync-project-auto-sync-start remote-config))))))
 
 (defun rsync-project-write-list ()
   "Save the rsync project remote list."
@@ -320,47 +330,54 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
 ;;; auto sync
 (defun rsync-project-auto-sync-start (remote-config)
   "Start the background monitor for REMOTE-CONFIG's project directory. It auto-syncs to the remote."
-  (if (rsync-project--test-connection remote-config)
-      (unless (gethash (rsync-project--get-now-project-path)
-                       rsync-project-process)
-        (let ((rsync-buffer-name (format "*Rsync %s*" (cl-getf remote-config :root-path)))
-              (rsync-args (rsync-project-build-rsync-args remote-config))
-              (rsync-project--process nil))
-          (setq rsync-project--process
-                (apply
-                 #'start-process
-                 `("rsync-project"
-                   ,rsync-buffer-name
-                   "watchexec"
-                   ,@(append (list "--ignore-nothing"
-                                   "rsync")
-                             rsync-args))))
-          (with-current-buffer rsync-buffer-name
-            (goto-char (point-max))
-            (skip-chars-backward "\n[:space:]")
-            (require 'time-stamp)
-            (insert (concat "\n\n" (time-stamp-string) "\n")))
-
-          (set-process-sentinel rsync-project--process
-                                #'(lambda (proc event)
-                                    (if (or (s-contains? "kill" event) (s-contains? "finish" event))
-                                        (message "%s rsync finish" (project-root (project-current)))
-                                      (message "%s rsync run error: %s" (project-root (project-current)) event))))
-          (puthash (rsync-project--get-now-project-path)
-                   rsync-project--process
-                   rsync-project-process)))
-    (message "Can't connect remote, close auto save.")))
+  (let* ((remote-state (gethash (rsync-project--get-now-project-path)
+                                rsync-project-states))
+         (connectp (plist-get remote-state :connectp))
+         (process (plist-get remote-state :process)))
+    (if connectp
+        (unless process
+          (let ((rsync-buffer-name (format "*Rsync %s*" (cl-getf remote-config :root-path)))
+                (rsync-args (rsync-project-build-rsync-args remote-config))
+                (rsync-process nil))
+            (setq rsync-process
+                  (apply
+                   #'start-process
+                   `("rsync-project"
+                     ,rsync-buffer-name
+                     "watchexec"
+                     ,@(append (list "--ignore-nothing"
+                                     "rsync")
+                               rsync-args))))
+            (with-current-buffer rsync-buffer-name
+              (goto-char (point-max))
+              (skip-chars-backward "\n[:space:]")
+              (require 'time-stamp)
+              (insert (concat "\n\n" (time-stamp-string) "\n")))
+            (set-process-sentinel rsync-process
+                                  #'(lambda (proc event)
+                                      (if (or (s-contains? "kill" event) (s-contains? "finish" event))
+                                          (message "%s rsync finish" (project-root (project-current)))
+                                        (message "%s rsync run error: %s" (project-root (project-current)) event))))
+            (puthash (rsync-project--get-now-project-path)
+                     (plist-put remote-state
+                                :process
+                                rsync-process)
+                     rsync-project-states)))
+      (message "Can't connect remote, close auto save."))))
 
 (defun rsync-project-auto-sync-stop (remote-config)
   "Stop the background monitor for REMOTE-CONFIG's project directory."
-  (let ((project-process (gethash (rsync-project--get-now-project-path)
-                                  rsync-project-process)))
-    (if project-process
+  (let* ((remote-state (gethash (rsync-project--get-now-project-path)
+                                rsync-project-states))
+         (process (plist-get remote-state :process)))
+    (if process
         (progn
-          (delete-process project-process)
-          (setf (gethash (rsync-project--get-now-project-path)
-                         rsync-project-process)
-                nil))
+          (delete-process process)
+          (puthash (rsync-project--get-now-project-path)
+                   (plist-put remote-state
+                              :process
+                              nil)
+                   rsync-project-states))
       (message "%s: Not start auto save process" (rsync-project--get-now-project-path)))))
 
 (defun rsync-project-format-remote-config (remote-config)
@@ -379,12 +396,21 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
   "Rsync re connect auto rsync."
   (interactive)
   (rsync-project-read-list)
-  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
+  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path)))
+        (remote-state (gethash (rsync-project--get-now-project-path)
+                               rsync-project-states)))
     (if remote-config
         (when (cl-getf remote-config :auto-rsyncp)
-          (rsync-project-auto-sync-stop remote-config)
-          (rsync-project-auto-sync-start remote-config)
-          (message "Add rsync finish."))
+          (let ((connectp (rsync-project--test-connection remote-config)))
+            (puthash (rsync-project--get-now-project-path)
+                     (plist-put remote-state
+                                :connectp
+                                connectp)
+                     rsync-project-states)
+            (rsync-project-auto-sync-stop remote-config)
+            (rsync-project-auto-sync-start remote-config)
+            (when connectp
+              (message "Add rsync finish."))))
       (message "Need use add this project"))))
 
 ;;;###autoload
@@ -444,14 +470,27 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
   "Return a Transient menu headline to indicate the currently selected project."
   (rsync-project-read-list)
   (let* ((root (project-root (project-current)))
-         (remote-config (rsync-project-get-remote-config root)))
+         (remote-config (rsync-project-get-remote-config root))
+         (remote-state (gethash (rsync-project--get-now-project-path)
+                                rsync-project-states)))
     (format (propertize "Project: %s %s" 'face 'transient-heading)
             (if root
                 (propertize root 'face 'transient-value)
               (propertize "None detected" 'face 'transient-inapt-suffix))
             (if remote-config
-                (format (propertize "Remote: %s\nIgnore list: %s" 'face 'transient-heading)
+                (format (propertize "Remote: %s Connectp: %s Auto: %s \nIgnore list: %s" 'face 'transient-heading)
                         (propertize (rsync-project-format-remote-config remote-config) 'face 'transient-value)
+                        (propertize (format "%s"
+                                            (plist-get remote-state
+                                                       :connectp))
+                                    'face
+                                    'transient-value)
+                        (propertize (format "%s"
+                                            (when (plist-get remote-state
+                                                             :process)
+                                              t))
+                                    'face
+                                    'transient-value)
                         (propertize (format "%s" (cl-getf remote-config :ignore-file-list)) 'face 'transient-help))
               ""))))
 
