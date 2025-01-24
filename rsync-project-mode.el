@@ -233,6 +233,16 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
   "Project have remote."
   (rsync-project-get-remote-config (rsync-project--get-now-project-path)))
 
+(defun rsync-project--check-auto-rsync ()
+  "Check if auto-rsync is enabled for the current project.
+This function reads the project list and retrieves the remote configuration
+for the current project. If the remote configuration exists, it returns
+the value of the `:auto-rsyncp` property."
+  (rsync-project-read-list)
+  (when-let* ((remote-config (rsync-project-get-remote-config
+                              (rsync-project--get-now-project-path))))
+    (cl-getf remote-config :auto-rsyncp)))
+
 ;;;###autoload
 (defun rsync-project-add ()
   "Add now project to rsync list."
@@ -425,7 +435,8 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
         (rsync-project-auto-sync-start remote-config))
       (rsync-project--update-item remote-config
                                   (list :auto-rsyncp
-                                        (not auto-rsyncp))))))
+                                        (not auto-rsyncp)))))
+  (transient-setup 'rsync-project-dispatch))
 
 ;;;###autoload
 (defun rsync-project-gitignorep-toggle ()
@@ -454,7 +465,8 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
   [["Sync"
     :if rsync-project--check
     ("r" "Rsync all" rsync-project-sync-all)
-    ("n" "Rsync re connect auto rsync" rsync-project-re-auto-rsync)]
+    ("n" "Rsync re connect auto rsync" rsync-project-re-auto-rsync
+     :if rsync-project--check-auto-rsync)]
    ["Ignore"
     :if rsync-project--check
     ("i a" "Add ignore" rsync-project-add-ignore
