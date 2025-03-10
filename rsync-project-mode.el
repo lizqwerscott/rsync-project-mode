@@ -349,7 +349,8 @@ the value of the `:auto-rsyncp` property."
         (unless process
           (let ((rsync-buffer-name (format "*Rsync %s*" (cl-getf remote-config :root-path)))
                 (rsync-args (rsync-project-build-rsync-args remote-config))
-                (rsync-process nil))
+                (rsync-process nil)
+                (default-directory (rsync-project--get-now-project-path)))
             (setq rsync-process
                   (apply
                    #'start-process
