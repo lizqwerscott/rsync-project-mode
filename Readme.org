@@ -3,10 +3,10 @@
 
 It also offers an option to automatically synchronize the current project in the background, leveraging [[https://github.com/watchexec/watchexec][watchexec]] to monitor file changes and =rsync= for efficient incremental updates.
 * Installation
-1. Install Emacs 28 or higher version
-2. Install Elisp dependencies:
-   - f
-3. Install [[https://github.com/watchexec/watchexec][watchexec]]
+1. Install Emacs 28 or higher version (all Elisp dependencies are built-in)
+2. Install system dependencies:
+   - rsync
+   - [[https://github.com/watchexec/watchexec][watchexec]]
 4. Download this repository using git clone, and replace the load-path path in the configuration below.
 5. Add the following code to your configuration file ~/.emacs:
    #+begin_src elisp
@@ -21,7 +21,16 @@ It also offers an option to automatically synchronize the current project in the
 
      (add-hook 'prog-mode-hook
                'rsync-project-mode)
+
+     (rsync-project-setup-indicator) ; Enable mode line status
+
    #+end_src
+* Modeline Indicator
+The mode line shows the current rsync status with colored icons:
+- 🔄 Idle (gray): No active sync operation
+- ⏳ Waiting (yellow): Debouncing before syncing
+- ⚡ Syncing (cyan): Currently transferring files
+- ❌ Failed (red): Last sync failed
 * Menu
 - ~rsync-project-dispatch~: a transient menu
 * Commands
