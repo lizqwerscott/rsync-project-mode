@@ -45,6 +45,18 @@
 (defvar rsync-project-remote-list nil
   "List of project rsync remote server.")
 
+(defcustom rsync-project-cooldown-period 2.0
+  "Time in seconds to wait after last file change before auto-syncing.
+This cooldown period prevents too frequent rsync operations when
+multiple files are changed in quick succession."
+  :group 'rsync-project
+  :type 'number)
+
+(defvar rsync-project-debounce-timer (make-hash-table :test #'equal)
+  "Hash table storing debounce timers for each project. Keys are project root
+paths, values are corresponding timer objects. Used to implement debounce
+mechanism when files change, preventing too frequent rsync operations.")
+
 (defvar-local rsync-project-mode nil
   "Whether rsync-mode is enabled.")
 
@@ -203,7 +215,9 @@ local path, SSH configuration, ignore list, and gitignore settings."
                 `("-e"
                   (format "\"ssh -p %d\"" remote-port))))
       ,@(if gitignorep
-            (list "--filter=':- .gitignore'"))
+            ;; (list "--filter=':- .gitignore'")
+            (list "--filter=':- .gitignore'")
+          )
       ,@(mapcar #'(lambda (dir)
                     (concat "--exclude=" dir))
                 ignore-list)
@@ -331,23 +345,19 @@ the value of the `:auto-rsyncp` property."
 (defun rsync-project-sync-all ()
   "Rsync all."
   (interactive)
-  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
-    (if remote-config
-        (let ((rsync-buffer (get-buffer-create "*Rsync project*")))
-          (async-shell-command (rsync-project-generate-rsync-cmd remote-config)
-                               rsync-buffer))
-      (message "Need use add this project"))))
+  (rsync-project--reset-debounce-timer (rsync-project--get-now-project-path)))
 
 ;;; auto sync
 (defun rsync-project-auto-sync-start (remote-config)
   "Start the background monitor for REMOTE-CONFIG's project directory. It auto-syncs to the remote."
-  (let* ((remote-state (gethash (rsync-project--get-now-project-path)
+  (let* ((path (rsync-project--get-now-project-path))
+         (remote-state (gethash path
                                 rsync-project-states))
          (connectp (plist-get remote-state :connectp))
          (process (plist-get remote-state :process)))
     (if connectp
         (unless process
-          (let ((rsync-buffer-name (format "*Rsync %s*" (cl-getf remote-config :root-path)))
+          (let ((rsync-buffer-name (format " *Rsync %s*" (cl-getf remote-config :root-path)))
                 (rsync-args (rsync-project-build-rsync-args remote-config))
                 (rsync-process nil)
                 (default-directory (rsync-project--get-now-project-path)))
@@ -357,19 +367,15 @@ the value of the `:auto-rsyncp` property."
                    `("rsync-project"
                      ,rsync-buffer-name
                      "watchexec"
-                     ,@(append (list "--ignore-nothing"
-                                     "rsync")
-                               rsync-args))))
-            (with-current-buffer rsync-buffer-name
-              (goto-char (point-max))
-              (skip-chars-backward "\n[:space:]")
-              (require 'time-stamp)
-              (insert (concat "\n\n" (time-stamp-string) "\n")))
+                     "--emit-events-to=json-stdio"
+                     "--only-emit-events")))
             (set-process-sentinel rsync-process
                                   #'(lambda (proc event)
                                       (if (or (s-contains? "kill" event) (s-contains? "finish" event))
                                           (message "%s rsync finish" (project-root (project-current)))
                                         (message "%s rsync run error: %s" (project-root (project-current)) event))))
+            (set-process-filter rsync-process #'rsync-project-auto-sync-filter)
+            (process-put rsync-process 'rsync-project-path path)
             (puthash (rsync-project--get-now-project-path)
                      (plist-put remote-state
                                 :process
@@ -391,6 +397,66 @@ the value of the `:auto-rsyncp` property."
                               nil)
                    rsync-project-states))
       (message "%s: Not start auto save process" (rsync-project--get-now-project-path)))))
+
+(defun rsync-project--auto-sync (path)
+  "Perform an rsync operation for the project at PATH.
+PATH is the project root directory path.
+This function is called after file changes are detected and debounced.
+It creates a new rsync process to sync the project to remote."
+  (let* ((remote-config (rsync-project-get-remote-config path))
+         (rsync-buffer-name (format "* Rsync sync %s*" (cl-getf remote-config :root-path)))
+         (rsync-process nil)
+         (default-directory (cl-getf remote-config :root-path)))
+    (setq rsync-process
+          (apply
+           #'start-process
+           `("rsync-project-sync"
+             ,rsync-buffer-name
+             "bash"
+             "-c"
+             ,(rsync-project-generate-rsync-cmd remote-config))))
+    (set-process-sentinel rsync-process
+                          (lambda (proc event)
+                            (if (or (s-contains? "kill" event) (s-contains? "finish" event))
+                                (message "%s rsync finish" (project-root (project-current)))
+                              (message "%s rsync run error: %s" (project-root (project-current)) event))))))
+
+(defun rsync-project--reset-debounce-timer (path)
+  "Rest debounces timer for the project at PATH."
+  (let* ((debounce-timer (gethash path rsync-project-debounce-timer)))
+    (when debounce-timer
+      (cancel-timer debounce-timer))
+    (setf (gethash path rsync-project-debounce-timer)
+          (run-at-time rsync-project-cooldown-period
+                       nil
+                       (lambda ()
+                         (setf (gethash path rsync-project-debounce-timer)
+                               nil)
+                         (rsync-project--auto-sync path))))))
+
+(defun rsync-project-auto-sync-filter (proc string)
+  "Process filter for auto-sync watchexec process.
+PROC is the watchexec process.
+STRING is the JSON output from watchexec about file changes.
+When file changes are detected, it debounces and triggers rsync."
+  (when (buffer-live-p (process-buffer proc))
+    (with-current-buffer (process-buffer proc)
+      (dolist (data-block (split-string string "\n"))
+        (let* ((data-block (string-trim data-block))
+               (json nil))
+          (unless (string= data-block "")
+            (condition-case-unless-debug err
+                (setq json
+                      (json-parse-string data-block
+                                         :object-type 'plist
+                                         :null-object nil
+                                         :false-object :json-false))
+              (json-parse-error
+               ;; parse error and not because of incomplete json
+               (jsonrpc--warn "Invalid JSON: %s\t %s" (cdr err) data-blcok)))
+            (when json
+              (rsync-project--reset-debounce-timer
+               (process-get proc 'rsync-project-path)))))))))
 
 (defun rsync-project-format-remote-config (remote-config)
   "Get REMOTE-CONFIG's remote path."
