@@ -169,26 +169,13 @@ remote configuration based on the truename of PROJECT-PATH."
 
 (defun rsync-project--test-connection (remote-config)
   "Test connection to the remote host in REMOTE-CONFIG.
-REMOTE-CONFIG is a plist containing SSH configuration details,
-such as user, host, and port. Returns t if the connection is successful, nil
-otherwise."
+Returns t if connection succeeds, nil otherwise."
   (let* ((ssh-config (cl-getf remote-config :ssh-config))
          (remote-user (cl-getf ssh-config :user))
          (remote-host (cl-getf ssh-config :host))
          (remote-port (cl-getf ssh-config :port)))
     (= 0
        (shell-command
-        ;; (format "ssh %s -o BatchMode=yes -o ConnectTimeout=1 %s true &>/dev/null"
-        ;;         (if remote-port
-        ;;             (if (not (= 22 remote-port))
-        ;;                 (format "-p %s" remote-port)
-        ;;               "")
-        ;;           "")
-        ;;         (if (and remote-user remote-host)
-        ;;             (format "%s@%s"
-        ;;                     remote-user
-        ;;                     remote-host)
-        ;;           remote-host))
         (format "ssh -o ConnectTimeout=1 -q %s %s &>/dev/null"
                 (if remote-port
                     (if (not (= 22 remote-port))
@@ -210,21 +197,17 @@ local path, SSH configuration, ignore list, and gitignore settings."
          (remote-user (cl-getf ssh-config :user))
          (remote-host (cl-getf ssh-config :host))
          (remote-port (cl-getf ssh-config :port))
-         (remote-path (cl-getf ssh-config :remote-dir))
-         (ignore-list (cl-getf remote-config :ignore-file-list))
-         (gitignorep (cl-getf remote-config :gitignorep)))
+         (remote-path (cl-getf ssh-config :remote-dir)))
     `("-avtP"
       ,@(if remote-port
             (if (not (= 22 remote-port))
                 `("-e"
                   (format "\"ssh -p %d\"" remote-port))))
-      ,@(if gitignorep
-            ;; (list "--filter=':- .gitignore'")
-            (list "--filter=':- .gitignore'")
-          )
+      ,@(if (cl-getf remote-config :gitignorep)
+            (list "--filter=':- .gitignore'"))
       ,@(mapcar #'(lambda (dir)
                     (concat "--exclude=" dir))
-                ignore-list)
+                (cl-getf remote-config :ignore-file-list))
       ,local-path
       ,(if (and remote-user remote-host)
            (format "%s@%s:%s"
@@ -352,15 +335,12 @@ the value of the `:auto-rsyncp` property."
 
 ;;; auto sync
 (defun rsync-project-auto-sync-start (remote-config)
-  "Start the background monitor for REMOTE-CONFIG's project directory.
-It auto-syncs to the remote."
+  "Start the background monitor for REMOTE-CONFIG's project directory."
   (let* ((path (rsync-project--get-now-project-path))
          (remote-state (gethash path
-                                rsync-project-states))
-         (connectp (plist-get remote-state :connectp))
-         (process (plist-get remote-state :process)))
-    (if connectp
-        (unless process
+                                rsync-project-states)))
+    (if (plist-get remote-state :connectp)
+        (unless (plist-get remote-state :process)
           (let ((rsync-buffer-name (format " *Rsync %s*" (cl-getf remote-config :root-path)))
                 (rsync-process nil)
                 (default-directory (rsync-project--get-now-project-path)))
