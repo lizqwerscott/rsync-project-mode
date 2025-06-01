@@ -57,6 +57,9 @@ Keys are project root paths, values are corresponding timer objects. Used to
 implement debounce mechanism when files change, preventing too frequent rsync
 operations.")
 
+(defvar rsync-project-sync-states (make-hash-table :test #'equal)
+  "Rsync project sync states and process.")
+
 (defvar-local rsync-project-mode nil
   "Whether rsync-mode is enabled.")
 
@@ -376,6 +379,7 @@ It auto-syncs to the remote."
                                         (message "%s rsync run error: %s" (project-root (project-current)) event))))
             (set-process-filter rsync-process #'rsync-project-auto-sync-filter)
             (process-put rsync-process 'rsync-project-path path)
+            (setf (gethash path rsync-project-sync-states) 'idle)
             (puthash (rsync-project--get-now-project-path)
                      (plist-put remote-state
                                 :process
@@ -407,6 +411,7 @@ It creates a new rsync process to sync the project to remote."
          (rsync-buffer-name (format "* Rsync sync %s*" (cl-getf remote-config :root-path)))
          (rsync-process nil)
          (default-directory (cl-getf remote-config :root-path)))
+    (setf (gethash path rsync-project-sync-states) 'running)
     (setq rsync-process
           (apply
            #'start-process
@@ -418,8 +423,9 @@ It creates a new rsync process to sync the project to remote."
     (set-process-sentinel rsync-process
                           (lambda (_ event)
                             (if (or (string-match-p "kill" event) (string-match-p "finish" event))
-                                (message "%s rsync finish" (project-root (project-current)))
-                              (message "%s rsync run error: %s" (project-root (project-current)) event))))))
+                                (setf (gethash path rsync-project-sync-states) 'idle)
+                              (message "%s rsync run error: %s" (project-root (project-current)) event)
+                              (setf (gethash path rsync-project-sync-states) 'failed))))))
 
 (defun rsync-project--reset-debounce-timer (path)
   "Rest debounces timer for the project at PATH."
@@ -455,6 +461,7 @@ When file changes are detected, it debounces and triggers rsync."
                ;; parse error and not because of incomplete json
                (user-error "Invalid JSON: %s\t %s" (cdr err) data-block)))
             (when json
+              (setf (gethash (process-get proc 'rsync-project-path) rsync-project-sync-states) 'check)
               (rsync-project--reset-debounce-timer
                (process-get proc 'rsync-project-path)))))))))
 
@@ -597,6 +604,53 @@ When file changes are detected, it debounces and triggers rsync."
                     (propertize "Enable" 'face 'rsync-project-start-face)
                   (propertize "Disable" 'face 'rsync-project-stop-face)))
       (message "Need use add this project"))))
+
+;;; modeline
+(defface rsync-project-idle-face
+  '((t :foreground "gray" :weight bold))
+  "Face for idle state.")
+
+(defface rsync-project-wait-face
+  '((t :foreground "yellow" :weight bold))
+  "Face for waiting state.")
+
+(defface rsync-project-syncing-face
+  '((t :foreground "cyan" :weight bold))
+  "Face for syncing state.")
+
+(defface rsync-project-failed-face
+  '((t :foreground "red" :weight bold))
+  "Face for failed state.")
+
+(defun rsync-project--indicator ()
+  "Return a string indicating current rsync state for mode line.
+Possible states and their meanings:
+- Idle    : No active sync operation
+- Wait    : Waiting for debounce period before syncing
+- Syncing : Currently syncing files to remote
+- Failed  : Last sync operation failed"
+  (when-let* ((path (rsync-project--get-now-project-path))
+              (sync-states (gethash path rsync-project-sync-states)))
+    (format " %s "
+            (pcase sync-states
+              ('idle (propertize "🔄 Idle" 'face 'rsync-project-idle-face))
+              ('check (propertize "⏳ Waiting" 'face 'rsync-project-wait-face))
+              ('running (propertize "⚡ Syncing" 'face 'rsync-project-syncing-face))
+              ('failed (propertize "❌ Failed" 'face 'rsync-project-failed-face))))))
+
+;;;###autoload
+(defun rsync-project-setup-indicator ()
+  "Add rsync status indicator to the mode line.
+This function adds a visual indicator showing the current rsync state:
+- Idle: No active sync operation
+- Wait: Waiting for debounce period before syncing
+- Syncing: Currently syncing files to remote
+- Failed: Last sync operation failed
+
+The indicator will appear in the mode line when `rsync-project-mode' is active."
+  (unless (cl-find '(rsync-project-mode (:eval (rsync-project--indicator))) mode-line-misc-info :test 'equal)
+    (add-to-list 'mode-line-misc-info
+                 '(rsync-project-mode (:eval (rsync-project--indicator))))))
 
 (provide 'rsync-project-mode)
 ;;; rsync-project-mode.el ends here
