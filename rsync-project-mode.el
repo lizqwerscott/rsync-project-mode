@@ -13,9 +13,8 @@
 
 (require 'cl-lib)
 (require 'project)
-(require 'f)
-(require 's)
 (require 'transient)
+(require 'tramp)
 
 (defgroup rsync-project nil
   "Convenient project remote synchronization."
@@ -24,20 +23,20 @@
   :link '(url-link "https://github.com/lizqwerscott/rsync-project-mode"))
 
 (defcustom rsync-project-default-auto-rsyncp nil
-  "Whether to automatically sync in the background when creating a new remote project."
+  "Non-nil means auto sync in background when creating new remote project."
   :group 'rsync-project
   :type 'boolean)
 
 (defcustom rsync-project-default-gitignorep nil
-  "Whether to read the contents of `.gitignore' as filter content when creating a new remote project."
+  "Non-nil means use `.gitignore' as filter when creating new remote project."
   :group 'rsync-project
   :type 'boolean)
 
 (defcustom rsync-project-list-file (if (boundp 'no-littering-var-directory )
-                                       (f-join no-littering-var-directory
-                                               "rsync-project-list-file.el")
-                                     (f-join user-emacs-directory
-                                             "rsync-project-list-file.el"))
+                                       (expand-file-name "rsync-project-list-file.el"
+                                                         no-littering-var-directory)
+                                     (expand-file-name "rsync-project-list-file.el"
+                                                       user-emacs-directory))
   "File in which to save the list of known projects."
   :group 'rsync-project
   :type 'file)
@@ -53,23 +52,24 @@ multiple files are changed in quick succession."
   :type 'number)
 
 (defvar rsync-project-debounce-timer (make-hash-table :test #'equal)
-  "Hash table storing debounce timers for each project. Keys are project root
-paths, values are corresponding timer objects. Used to implement debounce
-mechanism when files change, preventing too frequent rsync operations.")
+  "Hash table storing debounce timers for each project.
+Keys are project root paths, values are corresponding timer objects. Used to
+implement debounce mechanism when files change, preventing too frequent rsync
+operations.")
 
 (defvar-local rsync-project-mode nil
   "Whether rsync-mode is enabled.")
 
 (defvar rsync-project-states (make-hash-table :test #'equal)
-  "Rsync project remote states and process")
+  "Rsync project remote states and process.")
 
 (defface rsync-project-start-face
   '((t :foreground "green"))
-  "Face for 'Start' state.")
+  "Face for `Start' state.")
 
 (defface rsync-project-stop-face
   '((t :foreground "red"))
-  "Face for 'Stop' state.")
+  "Face for `Stop' state.")
 
 (define-minor-mode rsync-project-mode
   "Toggle rsync project mode."
@@ -91,7 +91,7 @@ mechanism when files change, preventing too frequent rsync operations.")
                          :process nil)
                    rsync-project-states)))
       (if (not rsync-project-mode)
-          (rsync-project-auto-sync-stop remote-config)
+          (rsync-project-auto-sync-stop)
         (when (plist-get remote-config :auto-rsyncp)
           (rsync-project-auto-sync-start remote-config))))))
 
@@ -137,7 +137,7 @@ mechanism when files change, preventing too frequent rsync operations.")
      (rsync-project-write-list)))
 
 (defun rsync-project--update-item (plist new-key-values)
-  "Update the PLIST with corresponding values from NEW-KEY-VALUES for matching keys."
+  "Update PLIST with values from NEW-KEY-VALUES for matching keys."
   (let ((new-plist nil))
     (cl-loop for (key value) on plist by #'cddr
              do (let ((new-value (cl-getf new-key-values key)))
@@ -167,7 +167,8 @@ remote configuration based on the truename of PROJECT-PATH."
 (defun rsync-project--test-connection (remote-config)
   "Test connection to the remote host in REMOTE-CONFIG.
 REMOTE-CONFIG is a plist containing SSH configuration details,
-such as user, host, and port. Returns t if the connection is successful, nil otherwise."
+such as user, host, and port. Returns t if the connection is successful, nil
+otherwise."
   (let* ((ssh-config (cl-getf remote-config :ssh-config))
          (remote-user (cl-getf ssh-config :user))
          (remote-host (cl-getf ssh-config :host))
@@ -238,9 +239,9 @@ REMOTE-CONFIG should be a configuration object containing rsync arguments."
     (apply #'format
            (append (list
                     (concat "rsync "
-                            (s-join " "
-                                    (make-list (length rsync-args)
-                                               "%s"))))
+                            (string-join (make-list (length rsync-args)
+                                                    "%s")
+                                         " ")))
                    rsync-args))))
 
 (defun rsync-project--check ()
@@ -271,9 +272,9 @@ the value of the `:auto-rsyncp` property."
             (unless (string= (file-name-nondirectory (directory-file-name remote-dir-path))
                              name)
               (setf remote-dir-path
-                    (f-join remote-dir-path name)))
+                    (expand-file-name name remote-dir-path)))
             (while add-ignore-filep
-              (cl-pushnew (f-filename (read-file-name "Ignore path:" project-root-dir))
+              (cl-pushnew (file-name-nondirectory (read-file-name "Ignore path:" project-root-dir))
                           ignore-file-list)
               (setf add-ignore-filep
                     (yes-or-no-p (format "(%s)Add ignore files?" ignore-file-list))))
@@ -298,7 +299,7 @@ the value of the `:auto-rsyncp` property."
     (if remote-config
         (progn
           (when (cl-getf remote-config :auto-rsyncp)
-            (rsync-project-auto-sync-stop remote-config))
+            (rsync-project-auto-sync-stop))
           (setf rsync-project-remote-list
                 (cl-remove-if #'(lambda (item)
                                   (string= (cl-getf item :root-path)
@@ -317,7 +318,7 @@ the value of the `:auto-rsyncp` property."
           (new-ignore-file-list (cl-getf remote-config :ignore-file-list))
           (project-root-dir (cl-getf remote-config :root-path)))
       (while add-ignore-filep
-        (cl-pushnew (f-filename (read-file-name "Ignore path:" project-root-dir))
+        (cl-pushnew (file-name-nondirectory (read-file-name "Ignore path:" project-root-dir))
                     new-ignore-file-list)
         (setf add-ignore-filep
               (yes-or-no-p (format "(%s)Add ignore files?" new-ignore-file-list))))
@@ -331,7 +332,6 @@ the value of the `:auto-rsyncp` property."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let* ((new-ignore-file-list (cl-getf remote-config :ignore-file-list))
-           (project-root-dir (cl-getf remote-config :root-path))
            (choice (completing-read "Choose an ignore: " new-ignore-file-list)))
       (rsync-project--update-item remote-config
                                   (list :ignore-file-list
@@ -349,7 +349,8 @@ the value of the `:auto-rsyncp` property."
 
 ;;; auto sync
 (defun rsync-project-auto-sync-start (remote-config)
-  "Start the background monitor for REMOTE-CONFIG's project directory. It auto-syncs to the remote."
+  "Start the background monitor for REMOTE-CONFIG's project directory.
+It auto-syncs to the remote."
   (let* ((path (rsync-project--get-now-project-path))
          (remote-state (gethash path
                                 rsync-project-states))
@@ -358,7 +359,6 @@ the value of the `:auto-rsyncp` property."
     (if connectp
         (unless process
           (let ((rsync-buffer-name (format " *Rsync %s*" (cl-getf remote-config :root-path)))
-                (rsync-args (rsync-project-build-rsync-args remote-config))
                 (rsync-process nil)
                 (default-directory (rsync-project--get-now-project-path)))
             (setq rsync-process
@@ -370,8 +370,8 @@ the value of the `:auto-rsyncp` property."
                      "--emit-events-to=json-stdio"
                      "--only-emit-events")))
             (set-process-sentinel rsync-process
-                                  #'(lambda (proc event)
-                                      (if (or (s-contains? "kill" event) (s-contains? "finish" event))
+                                  #'(lambda (_ event)
+                                      (if (or (string-match-p "kill" event) (string-match-p "finish" event))
                                           (message "%s rsync finish" (project-root (project-current)))
                                         (message "%s rsync run error: %s" (project-root (project-current)) event))))
             (set-process-filter rsync-process #'rsync-project-auto-sync-filter)
@@ -383,7 +383,7 @@ the value of the `:auto-rsyncp` property."
                      rsync-project-states)))
       (message "Can't connect remote, close auto save."))))
 
-(defun rsync-project-auto-sync-stop (remote-config)
+(defun rsync-project-auto-sync-stop ()
   "Stop the background monitor for REMOTE-CONFIG's project directory."
   (let* ((remote-state (gethash (rsync-project--get-now-project-path)
                                 rsync-project-states))
@@ -416,8 +416,8 @@ It creates a new rsync process to sync the project to remote."
              "-c"
              ,(rsync-project-generate-rsync-cmd remote-config))))
     (set-process-sentinel rsync-process
-                          (lambda (proc event)
-                            (if (or (s-contains? "kill" event) (s-contains? "finish" event))
+                          (lambda (_ event)
+                            (if (or (string-match-p "kill" event) (string-match-p "finish" event))
                                 (message "%s rsync finish" (project-root (project-current)))
                               (message "%s rsync run error: %s" (project-root (project-current)) event))))))
 
@@ -453,7 +453,7 @@ When file changes are detected, it debounces and triggers rsync."
                                          :false-object :json-false))
               (json-parse-error
                ;; parse error and not because of incomplete json
-               (jsonrpc--warn "Invalid JSON: %s\t %s" (cdr err) data-blcok)))
+               (user-error "Invalid JSON: %s\t %s" (cdr err) data-block)))
             (when json
               (rsync-project--reset-debounce-timer
                (process-get proc 'rsync-project-path)))))))))
@@ -485,7 +485,7 @@ When file changes are detected, it debounces and triggers rsync."
                                 :connectp
                                 connectp)
                      rsync-project-states)
-            (rsync-project-auto-sync-stop remote-config)
+            (rsync-project-auto-sync-stop)
             (rsync-project-auto-sync-start remote-config)
             (when connectp
               (message "Add rsync finish."))))
@@ -498,7 +498,7 @@ When file changes are detected, it debounces and triggers rsync."
   (rsync-project-with-update-list remote-config
     (let ((auto-rsyncp (cl-getf remote-config :auto-rsyncp)))
       (if auto-rsyncp
-          (rsync-project-auto-sync-stop remote-config)
+          (rsync-project-auto-sync-stop)
         (rsync-project-auto-sync-start remote-config))
       (rsync-project--update-item remote-config
                                   (list :auto-rsyncp
@@ -525,9 +525,11 @@ When file changes are detected, it debounces and triggers rsync."
    ("c" "Connect remote" rsync-project-add :if-not rsync-project--check)
    ("d" "Delete remote" rsync-project-remove :if rsync-project--check)]
   ["Options"
-   ("a" rsync-project--get-auto-rsyncp rsync-project-auto-rsync-toggle
+   ("a" rsync-project-auto-rsync-toggle
+    :description rsync-project--get-auto-rsyncp
     :transient t)
-   ("g" rsync-project--get-gitignorep rsync-project-gitignorep-toggle
+   ("g" rsync-project-gitignorep-toggle
+    :description rsync-project--get-gitignorep
     :transient t)]
   [["Sync"
     :if rsync-project--check
