@@ -33,10 +33,10 @@
   :type 'boolean)
 
 (defcustom rsync-project-list-file (if (boundp 'no-littering-var-directory )
-                                       (expand-file-name "rsync-project-list-file.el"
-                                                         no-littering-var-directory)
-                                     (expand-file-name "rsync-project-list-file.el"
-                                                       user-emacs-directory))
+                                       (file-name-concat user-emacs-directory
+                                                         "rsync-project-list-file.el")
+                                     (file-name-concat user-emacs-directory
+                                                       "rsync-project-list-file.el"))
   "File in which to save the list of known projects."
   :group 'rsync-project
   :type 'file)
@@ -258,7 +258,7 @@ the value of the `:auto-rsyncp` property."
             (unless (string= (file-name-nondirectory (directory-file-name remote-dir-path))
                              name)
               (setf remote-dir-path
-                    (expand-file-name name remote-dir-path)))
+                    (file-name-concat remote-dir-path name)))
             (while add-ignore-filep
               (cl-pushnew (file-name-nondirectory (read-file-name "Ignore path:" project-root-dir))
                           ignore-file-list)
