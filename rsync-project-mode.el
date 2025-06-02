@@ -71,7 +71,7 @@
   :type 'boolean)
 
 (defcustom rsync-project-list-file (if (boundp 'no-littering-var-directory )
-                                       (file-name-concat user-emacs-directory
+                                       (file-name-concat no-littering-var-directory
                                                          "rsync-project-list-file.el")
                                      (file-name-concat user-emacs-directory
                                                        "rsync-project-list-file.el"))
