@@ -608,25 +608,22 @@ process accordingly."
 (defun rsync-project--selectd-project-description ()
   "Return a Transient menu headline to indicate the currently selected project."
   (rsync-project-read-list)
-  (let* ((root (project-root (project-current)))
-         (remote-config (rsync-project-get-remote-config root))
-         (remote-state (gethash (rsync-project--get-now-project-path)
-                                rsync-project-states)))
+  (when-let* ((path (rsync-project--get-now-project-path))
+              (remote-config (rsync-project-get-remote-config path))
+              (remote-state (gethash path rsync-project-states)))
     (format (propertize "Project: %s %s" 'face 'transient-heading)
-            (if root
-                (propertize root 'face 'transient-value)
+            (if path
+                (propertize path 'face 'transient-value)
               (propertize "None detected" 'face 'transient-inapt-suffix))
             (if remote-config
                 (format (propertize "Remote: %s Connectp: %s Auto: %s \nIgnore list: %s" 'face 'transient-heading)
                         (propertize (rsync-project-format-remote-config remote-config) 'face 'transient-value)
                         (propertize (format "%s"
-                                            (plist-get remote-state
-                                                       :connectp))
+                                            (rsync-project-state-connectp remote-state))
                                     'face
                                     'transient-value)
                         (propertize (format "%s"
-                                            (when (plist-get remote-state
-                                                             :process)
+                                            (when (rsync-project-state-process remote-state)
                                               t))
                                     'face
                                     'transient-value)
