@@ -205,8 +205,12 @@ multiple files are changed in quick succession."
     new-plist))
 
 (defun rsync-project--get-now-project-path ()
-  "Retrieve the absolute path of the current project's root directory."
-  (file-truename (project-root (project-current))))
+  "Return the absolute path of the current project's root directory.
+This function uses `project-root' to get the root directory of the
+current project and returns its truename (canonical absolute path)."
+  (when-let* ((project-now (project-current))
+              (root (project-root project-now)))
+    (file-truename root)))
 
 (defun rsync-project-get-remote-config (project-path)
   "Retrieve the remote configuration for the given PROJECT-PATH.
