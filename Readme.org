@@ -25,12 +25,6 @@ It also offers an option to automatically synchronize the current project in the
      (rsync-project-setup-indicator) ; Enable mode line status
 
    #+end_src
-* Modeline Indicator
-The mode line shows the current rsync status with colored icons:
-- 🔄 Idle (gray): No active sync operation
-- ⏳ Waiting (yellow): Debouncing before syncing
-- ⚡ Syncing (cyan): Currently transferring files
-- ❌ Failed (red): Last sync failed
 * Menu
 - ~rsync-project-dispatch~: a transient menu
 * Commands
