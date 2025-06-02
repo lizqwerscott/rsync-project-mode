@@ -33,6 +33,27 @@
 (require 'project)
 (require 'transient)
 
+(defclass rsync-project-state ()
+  ((connectp
+    :initarg :connectp
+    :type boolean
+    :accessor rsync-project-state-connectp)
+   (process
+    :initform nil
+    :accessor rsync-project-state-process)
+   (sync-state
+    :initarg :sync-state
+    :accessor rsync-project-state-sync-state)
+   (debounce-timer
+    :initform nil
+    :accessor rsync-project-state-debounce-timer))
+  "State information for a rsync project.
+- Disconnected: not connected with remote
+- Sync: local code sync with remote code
+- Wait: Waiting for debounce period before syncing
+- Syncing: Currently syncing files to remote
+- Failed: Last sync operation failed")
+
 (defgroup rsync-project nil
   "Convenient project remote synchronization."
   :group 'convenience
@@ -68,15 +89,6 @@ multiple files are changed in quick succession."
 (defvar rsync-project-remote-list nil
   "List of project rsync remote server.")
 
-(defvar rsync-project-debounce-timer (make-hash-table :test #'equal)
-  "Hash table storing debounce timers for each project.
-Keys are project root paths, values are corresponding timer objects. Used to
-implement debounce mechanism when files change, preventing too frequent rsync
-operations.")
-
-(defvar rsync-project-sync-states (make-hash-table :test #'equal)
-  "Rsync project sync states and process.")
-
 (defvar-local rsync-project-mode nil
   "Whether rsync-mode is enabled.")
 
@@ -91,8 +103,12 @@ operations.")
   '((t :foreground "red"))
   "Face for `Stop' state.")
 
-(defface rsync-project-idle-face
-  '((t :foreground "gray" :weight bold))
+(defface rsync-project-disconnected-face
+  '((t :foreground "red" :weight bold))
+  "Face for disconnected state.")
+
+(defface rsync-project-sync-face
+  '((t :foreground "green" :weight bold))
   "Face for idle state.")
 
 (defface rsync-project-wait-face
@@ -113,23 +129,26 @@ operations.")
   :group 'rsync-project
   (rsync-project-read-list)
   (when-let* ((project-root (project-current))
-              (remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
-    (let ((remote-state (gethash (rsync-project--get-now-project-path)
-                                 rsync-project-states)))
+              (path (rsync-project--get-now-project-path))
+              (remote-config (rsync-project-get-remote-config path)))
+    (let ((remote-state (gethash path rsync-project-states)))
       (unless remote-state
         (let ((connectp (rsync-project--test-connection remote-config)))
           (unless connectp
             (message "%s remote can't connect"
                      (plist-get (plist-get remote-config :ssh-config)
                                 :host)))
-          (puthash (rsync-project--get-now-project-path)
-                   (list :connectp connectp
-                         :process nil)
-                   rsync-project-states)))
+          (setq remote-state
+                (make-instance 'rsync-project-state
+                               :connectp connectp
+                               :sync-state (if connectp
+                                               'sync
+                                             'disconnected)))
+          (puthash path remote-state rsync-project-states)))
       (if (not rsync-project-mode)
-          (rsync-project-auto-sync-stop)
+          (rsync-project-auto-sync-stop remote-config remote-state)
         (when (plist-get remote-config :auto-rsyncp)
-          (rsync-project-auto-sync-start remote-config))))))
+          (rsync-project-auto-sync-start remote-config remote-state))))))
 
 (defun rsync-project-write-list ()
   "Save the rsync project remote list."
@@ -314,11 +333,13 @@ the value of the `:auto-rsyncp` property."
   "Remove now project in rsync list."
   (interactive)
   (rsync-project-read-list)
-  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path))))
+  (let* ((path (rsync-project--get-now-project-path))
+         (remote-config (rsync-project-get-remote-config path))
+         (remote-state (gethash path rsync-project-states)))
     (if remote-config
         (progn
           (when (cl-getf remote-config :auto-rsyncp)
-            (rsync-project-auto-sync-stop))
+            (rsync-project-auto-sync-stop remote-config remote-state))
           (setf rsync-project-remote-list
                 (cl-remove-if #'(lambda (item)
                                   (string= (cl-getf item :root-path)
@@ -364,67 +385,62 @@ the value of the `:auto-rsyncp` property."
 (defun rsync-project-sync-all ()
   "Rsync all."
   (interactive)
-  (rsync-project--reset-debounce-timer (rsync-project--get-now-project-path)))
+  (when-let* ((path (rsync-project--get-now-project-path))
+              (remote-config (rsync-project-get-remote-config path))
+              (remote-state (gethash path rsync-project-states)))
+    (rsync-project--reset-debounce-timer remote-config remote-state)))
 
 ;;; auto sync
-(defun rsync-project-auto-sync-start (remote-config)
+(defun rsync-project-auto-sync-start (remote-config remote-state)
   "Start the background monitor for REMOTE-CONFIG's project directory."
-  (let* ((path (rsync-project--get-now-project-path))
-         (remote-state (gethash path
-                                rsync-project-states)))
-    (if (plist-get remote-state :connectp)
-        (unless (plist-get remote-state :process)
-          (let ((rsync-buffer-name (format " *Rsync %s*" (cl-getf remote-config :root-path)))
-                (rsync-process nil)
-                (default-directory (rsync-project--get-now-project-path)))
-            (setq rsync-process
-                  (apply
-                   #'start-process
-                   `("rsync-project"
-                     ,rsync-buffer-name
-                     "watchexec"
-                     "--emit-events-to=json-stdio"
-                     "--only-emit-events")))
-            (set-process-sentinel rsync-process
-                                  #'(lambda (_ event)
-                                      (if (or (string-match-p "kill" event) (string-match-p "finish" event))
-                                          (message "%s rsync finish" (project-root (project-current)))
-                                        (message "%s rsync run error: %s" (project-root (project-current)) event))))
-            (set-process-filter rsync-process #'rsync-project-auto-sync-filter)
-            (process-put rsync-process 'rsync-project-path path)
-            (setf (gethash path rsync-project-sync-states) 'idle)
-            (puthash (rsync-project--get-now-project-path)
-                     (plist-put remote-state
-                                :process
-                                rsync-process)
-                     rsync-project-states)))
-      (message "Can't connect remote, close auto save."))))
+  (if (rsync-project-state-connectp remote-state)
+      (unless (rsync-project-state-process remote-state)
+        (let* ((path (cl-getf remote-config :root-path))
+               (rsync-buffer-name (format " *Rsync %s*" path))
+               (rsync-process nil)
+               (default-directory path))
+          (setq rsync-process
+                (apply
+                 #'start-process
+                 `("rsync-project"
+                   ,rsync-buffer-name
+                   "watchexec"
+                   "--emit-events-to=json-stdio"
+                   "--only-emit-events")))
+          (set-process-sentinel rsync-process
+                                #'(lambda (_ event)
+                                    (if (or (string-match-p "kill" event) (string-match-p "finish" event))
+                                        (message "%s rsync finish" (project-root (project-current)))
+                                      (message "%s rsync run error: %s" (project-root (project-current)) event))))
+          (set-process-filter rsync-process #'rsync-project-auto-sync-filter)
+          (process-put rsync-process 'rsync-project-path path)
+          (setf (rsync-project-state-sync-state remote-state)
+                'sync)
+          (setf (rsync-project-state-process remote-state)
+                rsync-process)))
+    (message "Can't connect remote, close auto save.")))
 
-(defun rsync-project-auto-sync-stop ()
+(defun rsync-project-auto-sync-stop (remote-config remote-state)
   "Stop the background monitor for REMOTE-CONFIG's project directory."
-  (let* ((remote-state (gethash (rsync-project--get-now-project-path)
-                                rsync-project-states))
-         (process (plist-get remote-state :process)))
+  (let* ((process (rsync-project-state-process remote-state)))
     (if process
         (progn
           (delete-process process)
-          (puthash (rsync-project--get-now-project-path)
-                   (plist-put remote-state
-                              :process
-                              nil)
-                   rsync-project-states))
-      (message "%s: Not start auto save process" (rsync-project--get-now-project-path)))))
+          (setf (rsync-project-state-process remote-state) nil)
+          (setf (rsync-project-state-sync-state remote-state) 'disconnected))
+      (message "%s: Not start auto save process" (cl-getf remote-config :root-path)))))
 
-(defun rsync-project--auto-sync (path)
-  "Perform an rsync operation for the project at PATH.
-PATH is the project root directory path.
-This function is called after file changes are detected and debounced.
-It creates a new rsync process to sync the project to remote."
-  (let* ((remote-config (rsync-project-get-remote-config path))
-         (rsync-buffer-name (format "* Rsync sync %s*" (cl-getf remote-config :root-path)))
+(defun rsync-project--auto-sync (remote-config remote-state)
+  "Perform an rsync operation for the current project.
+REMOTE-CONFIG is the project's remote configuration plist.
+REMOTE-STATE is the project's state object. This function is
+called after the debounce period expires and actually runs the
+rsync command to sync the project to the remote server."
+  (let* ((path (cl-getf remote-config :root-path))
+         (rsync-buffer-name (format "* Rsync sync %s*" path))
          (rsync-process nil)
-         (default-directory (cl-getf remote-config :root-path)))
-    (setf (gethash path rsync-project-sync-states) 'running)
+         (default-directory path))
+    (setf (rsync-project-state-sync-state remote-state) 'running)
     (setq rsync-process
           (apply
            #'start-process
@@ -436,28 +452,32 @@ It creates a new rsync process to sync the project to remote."
     (set-process-sentinel rsync-process
                           (lambda (_ event)
                             (if (or (string-match-p "kill" event) (string-match-p "finish" event))
-                                (setf (gethash path rsync-project-sync-states) 'idle)
+                                (setf (rsync-project-state-sync-state remote-state) 'sync)
                               (message "%s rsync run error: %s" (project-root (project-current)) event)
-                              (setf (gethash path rsync-project-sync-states) 'failed))))))
+                              (setf (rsync-project-state-sync-state remote-state) 'failed))))))
 
-(defun rsync-project--reset-debounce-timer (path)
-  "Rest debounces timer for the project at PATH."
-  (let* ((debounce-timer (gethash path rsync-project-debounce-timer)))
+(defun rsync-project--reset-debounce-timer (remote-config remote-state)
+  "Reset the debounce timer for automatic syncing.
+REMOTE-CONFIG is the project's remote configuration plist.
+REMOTE-STATE is the project's state object. This function
+cancels any existing debounce timer and starts a new one with
+`rsync-project-cooldown-period` duration."
+  (let* ((debounce-timer (rsync-project-state-debounce-timer remote-state)))
     (when debounce-timer
       (cancel-timer debounce-timer))
-    (setf (gethash path rsync-project-debounce-timer)
+    (setf (rsync-project-state-debounce-timer remote-state)
           (run-at-time rsync-project-cooldown-period
                        nil
                        (lambda ()
-                         (setf (gethash path rsync-project-debounce-timer)
+                         (setf (rsync-project-state-debounce-timer remote-state)
                                nil)
-                         (rsync-project--auto-sync path))))))
+                         (rsync-project--auto-sync remote-config remote-state))))))
 
 (defun rsync-project-auto-sync-filter (proc string)
   "Process filter for auto-sync watchexec process.
-PROC is the watchexec process.
-STRING is the JSON output from watchexec about file changes.
-When file changes are detected, it debounces and triggers rsync."
+PROC is the watchexec process. STRING is the JSON output from
+watchexec about file changes. When file changes are detected, it
+resets the debounce timer which will eventually trigger rsync."
   (when (buffer-live-p (process-buffer proc))
     (with-current-buffer (process-buffer proc)
       (dolist (data-block (split-string string "\n"))
@@ -474,9 +494,11 @@ When file changes are detected, it debounces and triggers rsync."
                ;; parse error and not because of incomplete json
                (user-error "Invalid JSON: %s\t %s" (cdr err) data-block)))
             (when json
-              (setf (gethash (process-get proc 'rsync-project-path) rsync-project-sync-states) 'check)
-              (rsync-project--reset-debounce-timer
-               (process-get proc 'rsync-project-path)))))))))
+              (let* ((path (process-get proc 'rsync-project-path))
+                     (remote-config (rsync-project-get-remote-config path))
+                     (remote-state (gethash path rsync-project-states)))
+                (setf (rsync-project-state-sync-state remote-state) 'check)
+                (rsync-project--reset-debounce-timer remote-config remote-state)))))))))
 
 (defun rsync-project-format-remote-config (remote-config)
   "Get REMOTE-CONFIG's remote path."
@@ -494,19 +516,15 @@ When file changes are detected, it debounces and triggers rsync."
   "Rsync re connect auto rsync."
   (interactive)
   (rsync-project-read-list)
-  (let ((remote-config (rsync-project-get-remote-config (rsync-project--get-now-project-path)))
-        (remote-state (gethash (rsync-project--get-now-project-path)
-                               rsync-project-states)))
+  (when-let* ((path (rsync-project--get-now-project-path))
+              (remote-config (rsync-project-get-remote-config path))
+              (remote-state (gethash path rsync-project-states)))
     (if remote-config
         (when (cl-getf remote-config :auto-rsyncp)
           (let ((connectp (rsync-project--test-connection remote-config)))
-            (puthash (rsync-project--get-now-project-path)
-                     (plist-put remote-state
-                                :connectp
-                                connectp)
-                     rsync-project-states)
-            (rsync-project-auto-sync-stop)
-            (rsync-project-auto-sync-start remote-config)
+            (setf (rsync-project-state-connectp remote-state) connectp)
+            (rsync-project-auto-sync-stop remote-config remote-state)
+            (rsync-project-auto-sync-start remote-config remote-state)
             (when connectp
               (message "Add rsync finish."))))
       (message "Need use add this project"))))
@@ -516,10 +534,12 @@ When file changes are detected, it debounces and triggers rsync."
   "Toggle every project auto rsyncp."
   (interactive)
   (rsync-project-with-update-list remote-config
-    (let ((auto-rsyncp (cl-getf remote-config :auto-rsyncp)))
+    (let ((auto-rsyncp (cl-getf remote-config :auto-rsyncp))
+          (remote-state (gethash (cl-getf remote-config :root-path)
+                                 rsync-project-states)))
       (if auto-rsyncp
-          (rsync-project-auto-sync-stop)
-        (rsync-project-auto-sync-start remote-config))
+          (rsync-project-auto-sync-stop remote-config remote-state)
+        (rsync-project-auto-sync-start remote-config remote-state))
       (rsync-project--update-item remote-config
                                   (list :auto-rsyncp
                                         (not auto-rsyncp)))))
@@ -620,17 +640,15 @@ When file changes are detected, it debounces and triggers rsync."
 
 ;;; modeline
 (defun rsync-project--indicator ()
-  "Return a string indicating current rsync state for mode line.
-Possible states and their meanings:
-- Idle    : No active sync operation
-- Wait    : Waiting for debounce period before syncing
-- Syncing : Currently syncing files to remote
-- Failed  : Last sync operation failed"
-  (when-let* ((path (rsync-project--get-now-project-path))
-              (sync-states (gethash path rsync-project-sync-states)))
+  "Return a string indicating current rsync state for mode line."
+  (when-let* ((project-now (project-current))
+              (remote-state (gethash (file-truename (project-root project-now))
+                                     rsync-project-states))
+              (sync-states (rsync-project-state-sync-state remote-state)))
     (format " %s "
             (pcase sync-states
-              ('idle (propertize "🔄 Idle" 'face 'rsync-project-idle-face))
+              ('disconnected (propertize "❌ Disconnected" 'face 'rsync-project-disconnected-face))
+              ('sync (propertize "✔️ Sync" 'face 'rsync-project-sync-face))
               ('check (propertize "⏳ Waiting" 'face 'rsync-project-wait-face))
               ('running (propertize "⚡ Syncing" 'face 'rsync-project-syncing-face))
               ('failed (propertize "❌ Failed" 'face 'rsync-project-failed-face))))))
@@ -639,11 +657,6 @@ Possible states and their meanings:
 (defun rsync-project-setup-indicator ()
   "Add rsync status indicator to the mode line.
 This function adds a visual indicator showing the current rsync state:
-- Idle: No active sync operation
-- Wait: Waiting for debounce period before syncing
-- Syncing: Currently syncing files to remote
-- Failed: Last sync operation failed
-
 The indicator will appear in the mode line when `rsync-project-mode' is active."
   (unless (cl-find '(rsync-project-mode (:eval (rsync-project--indicator))) mode-line-misc-info :test 'equal)
     (add-to-list 'mode-line-misc-info
