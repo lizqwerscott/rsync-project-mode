@@ -192,7 +192,9 @@ multiple files are changed in quick succession."
      (rsync-project-write-list)))
 
 (defun rsync-project--update-item (plist new-key-values)
-  "Update PLIST with values from NEW-KEY-VALUES for matching keys."
+  "Update PLIST with values from NEW-KEY-VALUES for matching keys.
+Return a new plist containing all keys from PLIST, with values
+replaced by corresponding values in NEW-KEY-VALUES when present."
   (let ((new-plist nil))
     (cl-loop for (key value) on plist by #'cddr
              do (let ((new-value (cl-getf new-key-values key)))
@@ -205,9 +207,7 @@ multiple files are changed in quick succession."
     new-plist))
 
 (defun rsync-project--get-now-project-path ()
-  "Return the absolute path of the current project's root directory.
-This function uses `project-root' to get the root directory of the
-current project and returns its truename (canonical absolute path)."
+  "Return the absolute path of the current project's root directory."
   (when-let* ((project-now (project-current))
               (root (project-root project-now)))
     (file-truename root)))
@@ -355,7 +355,9 @@ the value of the `:auto-rsyncp` property."
 ;;; handle ignore list
 ;;;###autoload
 (defun rsync-project-add-ignore ()
-  "Remove now project in rsync list."
+  "Add ignore patterns to current project's rsync configuration.
+This function interactively adds file/directory patterns to the
+ignore list of the current project's remote configuration."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let ((add-ignore-filep t)
@@ -372,7 +374,9 @@ the value of the `:auto-rsyncp` property."
 
 ;;;###autoload
 (defun rsync-project-remove-ignore ()
-  "Remove now project in rsync list."
+  "Remove ignore patterns from current project's rsync configuration.
+This function interactively removes file/directory patterns from
+the ignore list of the current project's remote configuration."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let* ((new-ignore-file-list (cl-getf remote-config :ignore-file-list))
@@ -396,7 +400,9 @@ the value of the `:auto-rsyncp` property."
 
 ;;; auto sync
 (defun rsync-project-auto-sync-start (remote-config remote-state)
-  "Start the background monitor for REMOTE-CONFIG's project directory."
+  "Start background monitoring for automatic syncing.
+REMOTE-CONFIG is the project's remote configuration plist.
+REMOTE-STATE is the project's state object."
   (if (rsync-project-state-connectp remote-state)
       (unless (rsync-project-state-process remote-state)
         (let* ((path (cl-getf remote-config :root-path))
@@ -425,7 +431,9 @@ the value of the `:auto-rsyncp` property."
     (message "Can't connect remote, close auto save.")))
 
 (defun rsync-project-auto-sync-stop (remote-config remote-state)
-  "Stop the background monitor for REMOTE-CONFIG's project directory."
+  "Stop background monitoring for automatic syncing.
+REMOTE-CONFIG is the project's remote configuration plist.
+REMOTE-STATE is the project's state object."
   (let* ((process (rsync-project-state-process remote-state)))
     (if process
         (progn
@@ -517,7 +525,9 @@ resets the debounce timer which will eventually trigger rsync."
 
 ;;;###autoload
 (defun rsync-project-re-auto-rsync ()
-  "Rsync re connect auto rsync."
+  "Re-establish auto-sync connection for current project.
+This function tests the remote connection, stops any running
+auto-sync process, and restarts it if the connection is successful."
   (interactive)
   (rsync-project-read-list)
   (when-let* ((path (rsync-project--get-now-project-path))
@@ -535,7 +545,10 @@ resets the debounce timer which will eventually trigger rsync."
 
 ;;;###autoload
 (defun rsync-project-auto-rsync-toggle ()
-  "Toggle every project auto rsyncp."
+  "Toggle auto-sync for now projects.
+This function toggles the :auto-rsyncp setting for all projects
+in `rsync-project-remote-list` and starts/stops the auto-sync
+process accordingly."
   (interactive)
   (rsync-project-with-update-list remote-config
     (let ((auto-rsyncp (cl-getf remote-config :auto-rsyncp))
