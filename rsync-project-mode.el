@@ -1,20 +1,37 @@
 ;;; rsync-project-mode.el --- Rsync project to remote machines  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2023  lizqwer scott
+;; Copyright (C) 2025  lizqwer scott
 
 ;; Author: lizqwer scott <lizqwerscott@gmail.com>
-;; URL: https://github.com/lizqwerscott/rsync-project-mode
 ;; Version: 0.1.0
-;; Keywords: rsync, project
+;; Package-Requires: ((emacs "29.4") (project "0.9.8") (transient "0.4.3"))
+;; Keywords: tools
+;; URL: https://github.com/lizqwerscott/rsync-project-mode
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ;;; Commentary:
+
+;;; rsync project mode
 
 ;;; Code:
 
 (require 'cl-lib)
+(require 'tramp)
+
 (require 'project)
 (require 'transient)
-(require 'tramp)
 
 (defgroup rsync-project nil
   "Convenient project remote synchronization."
