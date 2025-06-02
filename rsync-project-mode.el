@@ -655,14 +655,13 @@ process accordingly."
 ;;; modeline
 (defun rsync-project--indicator ()
   "Return a string indicating current rsync state for mode line."
-  (when-let* ((project-now (project-current))
-              (remote-state (gethash (file-truename (project-root project-now))
-                                     rsync-project-states))
+  (when-let* ((path (rsync-project--get-now-project-path))
+              (remote-state (gethash path rsync-project-states))
               (sync-states (rsync-project-state-sync-state remote-state)))
     (format " %s "
             (pcase sync-states
               ('disconnected (propertize "❌ Disconnected" 'face 'rsync-project-disconnected-face))
-              ('sync (propertize "✔️ Sync" 'face 'rsync-project-sync-face))
+              ('sync (propertize "✅ Sync" 'face 'rsync-project-sync-face))
               ('check (propertize "⏳ Waiting" 'face 'rsync-project-wait-face))
               ('running (propertize "⚡ Syncing" 'face 'rsync-project-syncing-face))
               ('failed (propertize "❌ Failed" 'face 'rsync-project-failed-face))))))
