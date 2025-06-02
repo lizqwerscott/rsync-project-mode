@@ -58,15 +58,15 @@
   :group 'rsync-project
   :type 'file)
 
-(defvar rsync-project-remote-list nil
-  "List of project rsync remote server.")
-
 (defcustom rsync-project-cooldown-period 2.0
   "Time in seconds to wait after last file change before auto-syncing.
 This cooldown period prevents too frequent rsync operations when
 multiple files are changed in quick succession."
   :group 'rsync-project
   :type 'number)
+
+(defvar rsync-project-remote-list nil
+  "List of project rsync remote server.")
 
 (defvar rsync-project-debounce-timer (make-hash-table :test #'equal)
   "Hash table storing debounce timers for each project.
@@ -90,6 +90,22 @@ operations.")
 (defface rsync-project-stop-face
   '((t :foreground "red"))
   "Face for `Stop' state.")
+
+(defface rsync-project-idle-face
+  '((t :foreground "gray" :weight bold))
+  "Face for idle state.")
+
+(defface rsync-project-wait-face
+  '((t :foreground "yellow" :weight bold))
+  "Face for waiting state.")
+
+(defface rsync-project-syncing-face
+  '((t :foreground "cyan" :weight bold))
+  "Face for syncing state.")
+
+(defface rsync-project-failed-face
+  '((t :foreground "red" :weight bold))
+  "Face for failed state.")
 
 (define-minor-mode rsync-project-mode
   "Toggle rsync project mode."
@@ -603,22 +619,6 @@ When file changes are detected, it debounces and triggers rsync."
       (message "Need use add this project"))))
 
 ;;; modeline
-(defface rsync-project-idle-face
-  '((t :foreground "gray" :weight bold))
-  "Face for idle state.")
-
-(defface rsync-project-wait-face
-  '((t :foreground "yellow" :weight bold))
-  "Face for waiting state.")
-
-(defface rsync-project-syncing-face
-  '((t :foreground "cyan" :weight bold))
-  "Face for syncing state.")
-
-(defface rsync-project-failed-face
-  '((t :foreground "red" :weight bold))
-  "Face for failed state.")
-
 (defun rsync-project--indicator ()
   "Return a string indicating current rsync state for mode line.
 Possible states and their meanings:
