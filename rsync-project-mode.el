@@ -390,6 +390,33 @@ the ignore list of the current project's remote configuration."
   (call-interactively #'rsync-project-re-auto-rsync))
 
 ;;;###autoload
+(defun rsync-project-change-remote ()
+  "Change remote directory for current project."
+  (interactive)
+  (rsync-project-read-list)
+  (let* ((path (rsync-project--get-now-project-path))
+         (name (project-name (project-current)))
+         (remote-config (rsync-project-get-remote-config path)))
+    (if remote-config
+        (let* ((ssh-config (cl-getf remote-config :ssh-config))
+               (old-remote-dir (cl-getf ssh-config :remote-dir))
+               (new-remote-dir (tramp-dissect-file-name (read-file-name "New remote dir:" "/ssh:")))
+               (new-remote-dir-path (tramp-file-name-localname new-remote-dir)))
+          (unless (string= (file-name-nondirectory (directory-file-name new-remote-dir-path))
+                           name)
+            (setf new-remote-dir-path
+                  (file-name-concat new-remote-dir-path name)))
+          (rsync-project-with-update-list remote-config
+            (rsync-project--update-item remote-config
+                                        (list :ssh-config
+                                              (list :user (tramp-file-name-user new-remote-dir)
+                                                    :host (tramp-file-name-host new-remote-dir)
+                                                    :port (tramp-file-name-port new-remote-dir)
+                                                    :remote-dir new-remote-dir-path))))
+          (message "Change %s to %s" old-remote-dir new-remote-dir-path))
+      (message "Now project not add rsync"))))
+
+;;;###autoload
 (defun rsync-project-sync-all ()
   "Rsync all."
   (interactive)
@@ -580,7 +607,8 @@ process accordingly."
    rsync-project--selectd-project-description
    :pad-keys t
    ("c" "Connect remote" rsync-project-add :if-not rsync-project--check)
-   ("d" "Delete remote" rsync-project-remove :if rsync-project--check)]
+   ("d" "Delete remote" rsync-project-remove :if rsync-project--check)
+   ("o" "Change remote" rsync-project-change-remote :if rsync-project--check)]
   ["Options"
    ("a" rsync-project-auto-rsync-toggle
     :description rsync-project--get-auto-rsyncp
