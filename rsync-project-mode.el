@@ -316,7 +316,8 @@ the value of the `:auto-rsyncp` property."
               (setf remote-dir-path
                     (file-name-concat remote-dir-path name)))
             (while add-ignore-filep
-              (cl-pushnew (file-name-nondirectory (read-file-name "Ignore path:" project-root-dir))
+              (cl-pushnew (file-relative-name (read-file-name "Ignore path:" project-root-dir)
+                                              project-root-dir)
                           ignore-file-list)
               (setf add-ignore-filep
                     (yes-or-no-p (format "(%s)Add ignore files?" ignore-file-list))))
@@ -364,7 +365,8 @@ ignore list of the current project's remote configuration."
           (new-ignore-file-list (cl-getf remote-config :ignore-file-list))
           (project-root-dir (cl-getf remote-config :root-path)))
       (while add-ignore-filep
-        (cl-pushnew (file-name-nondirectory (read-file-name "Ignore path:" project-root-dir))
+        (cl-pushnew (file-relative-name (read-file-name "Ignore path:" project-root-dir)
+                                        project-root-dir)
                     new-ignore-file-list)
         (setf add-ignore-filep
               (yes-or-no-p (format "(%s)Add ignore files?" new-ignore-file-list))))
