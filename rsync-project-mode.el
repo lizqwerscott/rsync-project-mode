@@ -86,6 +86,13 @@ multiple files are changed in quick succession."
   :group 'rsync-project
   :type 'number)
 
+(defcustom rsync-project-sync-args '("-avtP")
+  "List of default arguments passed to rsync command.
+These arguments control the behavior of the rsync operation,
+such as verbosity, archive mode, and progress reporting."
+  :group 'rsync-project
+  :type '(list string))
+
 (defvar rsync-project-remote-list nil
   "List of project rsync remote server.")
 
@@ -254,7 +261,7 @@ local path, SSH configuration, ignore list, and gitignore settings."
          (remote-host (cl-getf ssh-config :host))
          (remote-port (cl-getf ssh-config :port))
          (remote-path (cl-getf ssh-config :remote-dir)))
-    `("-avtP"
+    `(,@rsync-project-sync-args
       ,@(if remote-port
             (if (not (= 22 remote-port))
                 `("-e"
