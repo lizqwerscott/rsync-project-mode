@@ -345,6 +345,7 @@ the value of the `:auto-rsyncp` property."
         (progn
           (when (cl-getf remote-config :auto-rsyncp)
             (rsync-project-auto-sync-stop remote-config remote-state))
+          (setf (gethash path rsync-project-states) nil)
           (setf rsync-project-remote-list
                 (cl-remove-if #'(lambda (item)
                                   (string= (cl-getf item :root-path)
